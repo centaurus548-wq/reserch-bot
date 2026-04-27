@@ -103,17 +103,20 @@ async def get_dxy_data(session):
     data = await fetch_json(session, url)
     if data and "rates" in data:
         rates = data["rates"]
-        usdjpy = rates.get("JPY", 0)
-        usdgbp = rates.get("GBP", 0)
-        usdcad = rates.get("CAD", 0)
-        usdsek = rates.get("SEK", 0)
-        usdchf = rates.get("CHF", 0)
-        usdeur = 1.0 / rates.get("EUR", 1)
-        if all([usdeur > 0, usdjpy > 0, usdgbp > 0, usdcad > 0, usdsek > 0, usdchf > 0]):
-            dxy = (50.14348112 * (usdeur ** 0.576) * (usdjpy ** 0.136) * (usdgbp ** 0.119) * (usdcad ** 0.091) * (usdsek ** 0.042) * (usdchf ** 0.036))
-            return {"dxy": dxy}
+        try:
+            dxy = (50.14348112
+                   * (rates.get("EUR", 1) ** 0.576)
+                   * (rates.get("JPY", 1) ** 0.136)
+                   * (rates.get("GBP", 1) ** 0.119)
+                   * (rates.get("CAD", 1) ** 0.091)
+                   * (rates.get("SEK", 1) ** 0.042)
+                   * (rates.get("CHF", 1) ** 0.036))
+            if dxy > 80 and dxy < 130:
+                return {"dxy": dxy}
+        except Exception:
+            pass
     return None
-
+    
 async def get_fear_greed(session):
     url = "https://api.alternative.me/fng/?limit=1"
     data = await fetch_json(session, url)
@@ -123,16 +126,8 @@ async def get_fear_greed(session):
     return None
 
 async def get_news(session):
-    url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=popular&limit=5"
-    data = await fetch_json(session, url)
-    if data and "Data" in data and len(data["Data"]) > 0:
-        return [{"title": i.get("title",""), "url": i.get("url",""), "source": i.get("source","")} for i in data["Data"][:5]]
-    url2 = "https://cryptopanic.com/api/free/v1/posts/?public=true&filter=rising&currencies=BTC,ETH&limit=5"
-    data2 = await fetch_json(session, url2)
-    if data2 and "results" in data2:
-        return [{"title": i.get("title",""), "url": i.get("url",""), "source": i.get("source",{}).get("title","")} for i in data2["results"][:5]]
-    return None
-
+    url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest&limit=5"
+    
 async def get_ai_analysis(session, btc, dxy, gdata, fg, news):
     if not GROQ_API_KEY:
         return None
