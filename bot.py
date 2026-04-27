@@ -76,6 +76,7 @@ async def get_global_data(session):
             "btc_dominance": float(d.get("btcDominance", 0)),
             "eth_dominance": float(d.get("ethDominance", 0)),
             "active_cryptos": int(d.get("assets", 0)),
+            "market_change_24h": float(d.get("marketCapChangePercentage24Hr", 0)),
         }
     url2 = "https://min-api.cryptocompare.com/data/pricemultifull?fsyms=BTC,ETH&tsyms=USD"
     data2 = await fetch_json(session, url2)
@@ -91,6 +92,7 @@ async def get_global_data(session):
                     "btc_dominance": (btc_mcap / total) * 100,
                     "eth_dominance": (eth_mcap / total) * 100,
                     "active_cryptos": 0,
+                    "market_change_24h": 0,
                 }
         except (KeyError, TypeError, ZeroDivisionError):
             pass
@@ -109,13 +111,7 @@ async def get_dxy_data(session):
         usdeur = 1.0 / rates.get("EUR", 1)
         if all([usdeur > 0, usdjpy > 0, usdgbp > 0, usdcad > 0, usdsek > 0, usdchf > 0]):
             dxy = (50.14348112 * (usdeur ** 0.576) * (usdjpy ** 0.136) * (usdgbp ** 0.119) * (usdcad ** 0.091) * (usdsek ** 0.042) * (usdchf ** 0.036))
-            return {
-                "dxy": dxy,
-                "eur_usd": rates.get("EUR", 0),
-                "usd_jpy": usdjpy,
-                "gbp_usd": rates.get("GBP", 0),
-                "aud_usd": rates.get("AUD", 0),
-            }
+            return {"dxy": dxy}
     return None
 
 async def get_fear_greed(session):
@@ -144,12 +140,13 @@ async def get_ai_analysis(session, btc, dxy, gdata, fg, news):
     btc_change = f"{btc['change_24h']:+.2f}%" if btc and btc.get("change_24h") else "N/A"
     btc_high = f"${btc['high_24h']:,.2f}" if btc and btc.get("high_24h") else "N/A"
     btc_low = f"${btc['low_24h']:,.2f}" if btc and btc.get("low_24h") else "N/A"
+    btc_vol = f"${btc['volume_24h']:,.0f}" if btc and btc.get("volume_24h") else "N/A"
     dxy_val = f"{dxy['dxy']:.2f}" if dxy and dxy.get("dxy") else "N/A"
-    eur_usd = f"{dxy['eur_usd']:.4f}" if dxy and dxy.get("eur_usd") else "N/A"
-    usd_jpy = f"{dxy['usd_jpy']:.2f}" if dxy and dxy.get("usd_jpy") else "N/A"
-    mcap = f"${gdata['total_market_cap']/1e12:.2f}T" if gdata and gdata.get("total_market_cap",0) > 0 else "N/A"
-    vol = f"${gdata['volume_24h']/1e9:.1f}B" if gdata and gdata.get("volume_24h",0) > 0 else "N/A"
-    btc_dom = f"{gdata['btc_dominance']:.1f}%" if gdata and gdata.get("btc_dominance") else "N/A"
+    mcap = f"${gdata['total_market_cap']:,.0f}" if gdata and gdata.get("total_market_cap",0) > 0 else "N/A"
+    mcap_ch = f"{gdata['market_change_24h']:+.2f}%" if gdata and gdata.get("market_change_24h") else "N/A"
+    vol = f"${gdata['volume_24h']:,.0f}" if gdata and gdata.get("volume_24h",0) > 0 else "N/A"
+    btc_dom = f"{gdata['btc_dominance']:.1f}%" if gdata and gdata.get("btc_dominance") else "0.0%"
+    eth_dom = f"{gdata['eth_dominance']:.1f}%" if gdata and gdata.get("eth_dominance") else "0.0%"
     fg_val = f"{fg['value']} ({fg['label']})" if fg else "N/A"
     news_str = ""
     if news:
@@ -160,22 +157,21 @@ async def get_ai_analysis(session, btc, dxy, gdata, fg, news):
 DATA:
 BTC/USDT: {btc_price} ({btc_change})
 High/Low 24h: {btc_high} / {btc_low}
+Volume BTC: {btc_vol}
 DXY: {dxy_val}
-EUR/USD: {eur_usd} | USD/JPY: {usd_jpy}
-Total Market Cap: {mcap}
-24h Volume: {vol}
-BTC Dominance: {btc_dom}
+Total Market Cap: {mcap} ({mcap_ch})
+Volume Global: {vol}
+BTC Dom: {btc_dom} | ETH Dom: {eth_dom}
 Fear & Greed: {fg_val}
 
 BERITA:
 {news_str if news_str else "Tidak tersedia"}
 
-Buat 3 bagian singkat:
-1. Kondisi Pasar
-2. Sentimen & Berita
-3. Outlook
+Buat analisis dalam 2 bagian:
+1. Ringkasan Pasar - rangkum data harga, volume, market cap, DXY
+2. Analisis Teknikal BTC/USDT - analisis high/low, dominasi BTC, fear & greed, dampak DXY
 
-Jawab padat, maks 300 kata."""
+Jawab padat dalam Bahasa Indonesia, maks 300 kata."""
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     payload = {"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1200, "temperature": 0.7}
@@ -190,79 +186,107 @@ Jawab padat, maks 300 kata."""
         print(f"[Groq Error] {e}")
     return None
 
-def fmt_price(n):
+def fmt_num(n):
     if not n or n <= 0: return "N/A"
-    return f"${n:,.2f}"
-
-def fmt_big(n):
-    if not n or n <= 0: return "N/A"
-    if n >= 1e12: return f"${n/1e12:.2f}T"
-    elif n >= 1e9: return f"${n/1e9:.2f}B"
-    elif n >= 1e6: return f"${n/1e6:.2f}M"
-    return f"${n:,.0f}"
-
-def fmt_vol(n):
-    if not n or n <= 0: return "N/A"
-    if n >= 1e9: return f"${n/1e9:.2f}B"
-    elif n >= 1e6: return f"${n/1e6:.2f}M"
     return f"${n:,.0f}"
 
 def fg_emoji(v):
-    if not v: return "N/A"
-    if v <= 20: return "😱 Extreme Fear"
-    elif v <= 40: return "😟 Fear"
-    elif v <= 60: return "😐 Neutral"
-    elif v <= 80: return "😊 Greed"
-    else: return "🤑 Extreme Greed"
+    if not v: return "⚪ N/A"
+    if v <= 20: return f"😱 {v} Extreme Fear"
+    elif v <= 40: return f"😟 {v} Fear"
+    elif v <= 60: return f"😐 {v} Neutral"
+    elif v <= 80: return f"😊 {v} Greed"
+    else: return f"🤑 {v} Extreme Greed"
 
 def build_embed(btc, dxy, gdata, fg, news, analysis):
     now = datetime.now(pytz.timezone("Asia/Jakarta"))
     embed = discord.Embed(
-        title="📊 Daily Crypto Market Report",
-        description=f"📅 **{now.strftime('%d %B %Y')}** | ⏰ {now.strftime('%H.%M')} WIB",
+        title=f"📊 Laporan Pasar Crypto Harian — {now.strftime('%d %B %Y')}",
         color=discord.Color.orange(),
         timestamp=now,
     )
-    budget = 0
-    # BTC/USDT
-    btc_val = "Data tidak tersedia"
+
+    # ---- DATA PASAR ----
+    dp = "Data tidak tersedia"
     if btc:
         ch = btc.get("change_24h", 0) or 0
-        e = "🟢" if ch >= 0 else "🔴"
-        btc_val = f"💰 **Harga:** {fmt_price(btc.get('price'))}\n{e} **24h:** {ch:+.2f}%\n📈 **High:** {fmt_price(btc.get('high_24h'))}\n📉 **Low:** {fmt_price(btc.get('low_24h'))}\n📊 **Volume:** {fmt_vol(btc.get('volume_24h'))}\n🪙 **Market Cap:** {fmt_big(btc.get('mcap'))}"
-    embed.add_field(name="₿ BTC/USDT", value=btc_val, inline=True)
-    budget += len(btc_val) + 30
-    # DXY
-    dxy_val = "Data tidak tersedia"
-    if dxy:
-        dxy_val = f"💵 **DXY:** {dxy['dxy']:.2f}\n\n🇪🇺 EUR/USD: {dxy['eur_usd']:.4f}\n🇯🇵 USD/JPY: {dxy['usd_jpy']:.2f}\n🇬🇧 GBP/USD: {dxy['gbp_usd']:.4f}\n🇦🇺 AUD/USD: {dxy['aud_usd']:.4f}"
-    embed.add_field(name="💱 DXY Index & Forex", value=dxy_val, inline=True)
-    budget += len(dxy_val) + 30
-    # Global
-    gm_val = "Data tidak tersedia"
+        emoji = "🟢" if ch >= 0 else "🔴"
+        dp = f"**BTC/USDT:** ${btc['price']:,.2f} ({emoji} {ch:+.2f}% 24h)\n"
+        dp += f"**High/Low:** ${btc['high_24h']:,.2f} / ${btc['low_24h']:,.2f}\n"
+        dp += f"**Volume 24h:** {fmt_num(btc.get('volume_24h'))}\n"
+        if dxy:
+            dp += f"**DXY Index:** {dxy['dxy']:.2f}"
+        else:
+            dp += "**DXY Index:** N/A"
+    embed.add_field(name="📈 Data Pasar", value=dp, inline=False)
+
+    # ---- MARKET GLOBAL ----
+    mg = "Data tidak tersedia"
     if gdata:
-        lines = [f"🌐 **Market Cap:** {fmt_big(gdata.get('total_market_cap'))}", f"📊 **24h Volume:** {fmt_big(gdata.get('volume_24h'))}", f"₿ **BTC Dominance:** {gdata.get('btc_dominance', 0):.1f}%", f"Ξ **ETH Dominance:** {gdata.get('eth_dominance', 0):.1f}%"]
-        if fg:
-            lines.append(f"😨 **Fear & Greed:** {fg['value']} {fg_emoji(fg['value'])}")
-        gm_val = "\n".join(lines)
-    embed.add_field(name="🌍 Global Market", value=gm_val, inline=True)
-    budget += len(gm_val) + 30
-    # News
+        fg_s = fg_emoji(fg["value"]) if fg else "N/A"
+        mc = gdata.get("market_change_24h", 0) or 0
+        mc_emoji = "🟢" if mc >= 0 else "🔴"
+        mg = f"**Market Cap:** {fmt_num(gdata.get('total_market_cap'))}\n"
+        mg += f"**Volume Global:** {fmt_num(gdata.get('volume_24h'))}\n"
+        mg += f"**BTC Dom:** {gdata.get('btc_dominance',0):.1f}% | **ETH Dom:** {gdata.get('eth_dominance',0):.1f}%\n"
+        mg += f"**Fear & Greed:** {fg_s}\n"
+        mg += f"**Market 24h:** {mc_emoji} {mc:+.2f}%\n"
+        if gdata.get("market_change_24h", 0) and gdata["market_change_24h"] > 0:
+            mg += "**Trending:** 📈 Bullish"
+        elif gdata.get("market_change_24h", 0) and gdata["market_change_24h"] < 0:
+            mg += "**Trending:** 📉 Bearish"
+        else:
+            mg += "**Trending:** ➡️ Sideways"
+    embed.add_field(name="🌐 Market Global", value=mg, inline=False)
+
+    # ---- BERITA ----
     if news and len(news) > 0:
         news_lines = []
         for i, n in enumerate(news, 1):
-            line = f"**{i}.** [{n['title']}]({n['url']}) — *{n.get('source', '')}*"
-            if budget + len(line) > 2500: break
-            news_lines.append(line)
-            budget += len(line)
-        if news_lines:
-            embed.add_field(name="📰 Berita Crypto Terkini", value="\n".join(news_lines), inline=False)
-    # AI Analysis
+            news_lines.append(f"**{i}.** [{n['title']}]({n['url']}) — *{n.get('source', '')}*")
+        embed.add_field(name="📰 Berita Terkini", value="\n".join(news_lines), inline=False)
+    else:
+        embed.add_field(name="📰 Berita Terkini", value="Tidak ada berita tersedia saat ini.", inline=False)
+
+    # ---- ANALISIS AI ----
     if analysis:
-        remain = 6000 - budget - 150
-        if len(analysis) > remain:
-            analysis = analysis[:remain].rsplit(" ", 1)[0] + "..."
-        embed.add_field(name="🤖 Analisis AI (Groq)", value=analysis, inline=False)
+        lines = analysis.strip().split("\n")
+        sections = []
+        current_section = []
+        current_title = None
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            is_title = (stripped.startswith("1.") or stripped.startswith("2.") or stripped.startswith("Ringkasan") or stripped.startswith("Analisis") or stripped.startswith("Teknikal"))
+            if is_title and current_title:
+                sections.append((current_title, "\n".join(current_section)))
+                current_section = []
+            if is_title:
+                clean = stripped.lstrip("0123456789.").strip()
+                if not clean.startswith("**"):
+                    clean = f"**{clean}**"
+                if clean.startswith("**Ringkasan") or clean.startswith("**Analisis Teknikal"):
+                    if "Ringkasan" in clean or "Pasar" in clean:
+                        current_title = f"📈 {clean}"
+                    else:
+                        current_title = f"🔍 {clean}"
+                else:
+                    current_title = clean
+            else:
+                current_section.append(stripped)
+        if current_title and current_section:
+            sections.append((current_title, "\n".join(current_section)))
+
+        if not sections and analysis.strip():
+            sections.append(("🤖 Analisis AI", analysis.strip()))
+
+        for title, content in sections:
+            remain = 1024
+            if len(content) > remain:
+                content = content[:remain].rsplit(" ", 1)[0] + "..."
+            embed.add_field(name=title, value=content, inline=False)
+
     embed.set_footer(text="⚠️ Not Financial Advice | DYOR\nGroq AI | CryptoCompare | CoinCap | Alternative.me")
     return embed
 
