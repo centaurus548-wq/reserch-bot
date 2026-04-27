@@ -18,10 +18,12 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
 async def fetch_json(session, url, retries=3):
     for attempt in range(retries):
         try:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15), headers=HEADERS) as resp:
                 if resp.status == 200:
                     return await resp.json()
                 elif resp.status == 429:
@@ -42,12 +44,9 @@ async def get_btc_data(session):
         try:
             d = data["RAW"]["BTC"]["USDT"]
             return {
-                "price": d.get("PRICE", 0),
-                "change_24h": d.get("CHANGEPCT24HOUR", 0),
-                "high_24h": d.get("HIGH24HOUR", 0),
-                "low_24h": d.get("LOW24HOUR", 0),
-                "volume_24h": d.get("TOTALVOLUME24HTO", 0),
-                "mcap": d.get("MKTCAP", 0),
+                "price": d.get("PRICE", 0), "change_24h": d.get("CHANGEPCT24HOUR", 0),
+                "high_24h": d.get("HIGH24HOUR", 0), "low_24h": d.get("LOW24HOUR", 0),
+                "volume_24h": d.get("TOTALVOLUME24HTO", 0), "mcap": d.get("MKTCAP", 0),
             }
         except (KeyError, TypeError):
             pass
@@ -56,12 +55,9 @@ async def get_btc_data(session):
     if data2 and "data" in data2:
         d = data2["data"]
         return {
-            "price": float(d.get("priceUsd", 0)),
-            "change_24h": float(d.get("changePercent24Hr", 0)),
-            "high_24h": 0,
-            "low_24h": 0,
-            "volume_24h": float(d.get("volumeUsd24Hr", 0)),
-            "mcap": float(d.get("marketCapUsd", 0)),
+            "price": float(d.get("priceUsd", 0)), "change_24h": float(d.get("changePercent24Hr", 0)),
+            "high_24h": 0, "low_24h": 0,
+            "volume_24h": float(d.get("volumeUsd24Hr", 0)), "mcap": float(d.get("marketCapUsd", 0)),
         }
     return None
 
@@ -70,53 +66,49 @@ async def get_global_data(session):
     data = await fetch_json(session, url)
     if data and "data" in data:
         d = data["data"]
-        return {
-            "total_market_cap": float(d.get("marketCapUsd", 0)),
-            "volume_24h": float(d.get("volume24hUsd", 0)),
-            "btc_dominance": float(d.get("btcDominance", 0)),
-            "eth_dominance": float(d.get("ethDominance", 0)),
-            "active_cryptos": int(d.get("assets", 0)),
-            "market_change_24h": float(d.get("marketCapChangePercentage24Hr", 0)),
-        }
-    url2 = "https://min-api.cryptocompare.com/data/pricemultifull?fsyms=BTC,ETH&tsyms=USD"
+        mcap = float(d.get("marketCapUsd", 0))
+        vol = float(d.get("volume24hUsd", 0))
+        if mcap > 0:
+            return {
+                "total_market_cap": mcap, "volume_24h": vol,
+                "btc_dominance": float(d.get("btcDominance", 0)),
+                "eth_dominance": float(d.get("ethDominance", 0)),
+                "active_cryptos": int(d.get("assets", 0)),
+                "market_change_24h": float(d.get("marketCapChangePercentage24Hr", 0)),
+            }
+    url2 = "https://api.coingecko.com/api/v3/global"
     data2 = await fetch_json(session, url2)
-    if data2 and "RAW" in data2:
-        try:
-            btc_mcap = float(data2["RAW"]["BTC"]["USD"].get("MKTCAP", 0))
-            eth_mcap = float(data2["RAW"]["ETH"]["USD"].get("MKTCAP", 0))
-            total = btc_mcap + eth_mcap
-            if total > 0:
-                return {
-                    "total_market_cap": total,
-                    "volume_24h": 0,
-                    "btc_dominance": (btc_mcap / total) * 100,
-                    "eth_dominance": (eth_mcap / total) * 100,
-                    "active_cryptos": 0,
-                    "market_change_24h": 0,
-                }
-        except (KeyError, TypeError, ZeroDivisionError):
-            pass
+    if data2 and "data" in data2:
+        d = data2["data"]
+        return {
+            "total_market_cap": d["total_market_cap"]["usd"],
+            "volume_24h": d["total_volume"]["usd"],
+            "btc_dominance": d["market_cap_percentage"]["btc"],
+            "eth_dominance": d["market_cap_percentage"]["eth"],
+            "active_cryptos": d["active_cryptocurrencies"],
+            "market_change_24h": d["market_cap_change_percentage_24h_usd"],
+        }
     return None
 
 async def get_dxy_data(session):
     url = "https://api.exchangerate-api.com/v4/latest/USD"
     data = await fetch_json(session, url)
     if data and "rates" in data:
-        rates = data["rates"]
+        r = data["rates"]
         try:
-            dxy = (50.14348112
-                   * (rates.get("EUR", 1) ** 0.576)
-                   * (rates.get("JPY", 1) ** 0.136)
-                   * (rates.get("GBP", 1) ** 0.119)
-                   * (rates.get("CAD", 1) ** 0.091)
-                   * (rates.get("SEK", 1) ** 0.042)
-                   * (rates.get("CHF", 1) ** 0.036))
-            if dxy > 80 and dxy < 130:
+            eurusd = 1.0 / r.get("EUR", 1)
+            gbpusd = 1.0 / r.get("GBP", 1)
+            usdjpy = r.get("JPY", 1)
+            usdcad = r.get("CAD", 1)
+            usdsek = r.get("SEK", 1)
+            usdchf = r.get("CHF", 1)
+            dxy = 50.14348112 * (eurusd**0.576) * (usdjpy**0.136) * (gbpusd**0.119) * (usdcad**0.091) * (usdsek**0.042) * (usdchf**0.036)
+            if 80 < dxy < 130:
                 return {"dxy": dxy}
         except Exception:
             pass
     return None
-    
+
 async def get_fear_greed(session):
     url = "https://api.alternative.me/fng/?limit=1"
     data = await fetch_json(session, url)
@@ -126,8 +118,16 @@ async def get_fear_greed(session):
     return None
 
 async def get_news(session):
-    url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest&limit=5"
-    
+    url = "https://cryptopanic.com/api/free/v1/posts/?public=true&filter=rising&currencies=BTC,ETH&limit=5"
+    data = await fetch_json(session, url)
+    if data and "results" in data and len(data["results"]) > 0:
+        return [{"title": i.get("title",""), "url": i.get("url",""), "source": i.get("source",{}).get("title","")} for i in data["results"][:5]]
+    url2 = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest&limit=5"
+    data2 = await fetch_json(session, url2)
+    if data2 and "Data" in data2 and len(data2["Data"]) > 0:
+        return [{"title": i.get("title",""), "url": i.get("url",""), "source": i.get("source","")} for i in data2["Data"][:5]]
+    return None
+
 async def get_ai_analysis(session, btc, dxy, gdata, fg, news):
     if not GROQ_API_KEY:
         return None
@@ -136,12 +136,12 @@ async def get_ai_analysis(session, btc, dxy, gdata, fg, news):
     btc_high = f"${btc['high_24h']:,.2f}" if btc and btc.get("high_24h") else "N/A"
     btc_low = f"${btc['low_24h']:,.2f}" if btc and btc.get("low_24h") else "N/A"
     btc_vol = f"${btc['volume_24h']:,.0f}" if btc and btc.get("volume_24h") else "N/A"
-    dxy_val = f"{dxy['dxy']:.2f}" if dxy and dxy.get("dxy") else "N/A"
+    dxy_val = f"{dxy['dxy']:.2f}" if dxy else "N/A"
     mcap = f"${gdata['total_market_cap']:,.0f}" if gdata and gdata.get("total_market_cap",0) > 0 else "N/A"
-    mcap_ch = f"{gdata['market_change_24h']:+.2f}%" if gdata and gdata.get("market_change_24h") else "N/A"
+    mc_ch = f"{gdata['market_change_24h']:+.2f}%" if gdata and gdata.get("market_change_24h") else "N/A"
     vol = f"${gdata['volume_24h']:,.0f}" if gdata and gdata.get("volume_24h",0) > 0 else "N/A"
-    btc_dom = f"{gdata['btc_dominance']:.1f}%" if gdata and gdata.get("btc_dominance") else "0.0%"
-    eth_dom = f"{gdata['eth_dominance']:.1f}%" if gdata and gdata.get("eth_dominance") else "0.0%"
+    btc_dom = f"{gdata['btc_dominance']:.1f}%" if gdata else "N/A"
+    eth_dom = f"{gdata['eth_dominance']:.1f}%" if gdata else "N/A"
     fg_val = f"{fg['value']} ({fg['label']})" if fg else "N/A"
     news_str = ""
     if news:
@@ -154,7 +154,7 @@ BTC/USDT: {btc_price} ({btc_change})
 High/Low 24h: {btc_high} / {btc_low}
 Volume BTC: {btc_vol}
 DXY: {dxy_val}
-Total Market Cap: {mcap} ({mcap_ch})
+Total Market Cap: {mcap} ({mc_ch})
 Volume Global: {vol}
 BTC Dom: {btc_dom} | ETH Dom: {eth_dom}
 Fear & Greed: {fg_val}
@@ -175,10 +175,8 @@ Jawab padat dalam Bahasa Indonesia, maks 300 kata."""
             if resp.status == 200:
                 result = await resp.json()
                 return result["choices"][0]["message"]["content"]
-            else:
-                print(f"[Groq HTTP {resp.status}]")
-    except Exception as e:
-        print(f"[Groq Error] {e}")
+    except Exception:
+        pass
     return None
 
 def fmt_num(n):
@@ -195,94 +193,63 @@ def fg_emoji(v):
 
 def build_embed(btc, dxy, gdata, fg, news, analysis):
     now = datetime.now(pytz.timezone("Asia/Jakarta"))
-    embed = discord.Embed(
-        title=f"📊 Laporan Pasar Crypto Harian — {now.strftime('%d %B %Y')}",
-        color=discord.Color.orange(),
-        timestamp=now,
-    )
-
-    # ---- DATA PASAR ----
+    embed = discord.Embed(title=f"📊 Laporan Pasar Crypto Harian — {now.strftime('%d %B %Y')}", color=discord.Color.orange(), timestamp=now)
     dp = "Data tidak tersedia"
     if btc:
         ch = btc.get("change_24h", 0) or 0
-        emoji = "🟢" if ch >= 0 else "🔴"
-        dp = f"**BTC/USDT:** ${btc['price']:,.2f} ({emoji} {ch:+.2f}% 24h)\n"
+        e = "🟢" if ch >= 0 else "🔴"
+        dp = f"**BTC/USDT:** ${btc['price']:,.2f} ({e} {ch:+.2f}% 24h)\n"
         dp += f"**High/Low:** ${btc['high_24h']:,.2f} / ${btc['low_24h']:,.2f}\n"
         dp += f"**Volume 24h:** {fmt_num(btc.get('volume_24h'))}\n"
-        if dxy:
-            dp += f"**DXY Index:** {dxy['dxy']:.2f}"
-        else:
-            dp += "**DXY Index:** N/A"
+        dp += f"**DXY Index:** {dxy['dxy']:.2f}" if dxy else "**DXY Index:** N/A"
     embed.add_field(name="📈 Data Pasar", value=dp, inline=False)
-
-    # ---- MARKET GLOBAL ----
     mg = "Data tidak tersedia"
     if gdata:
         fg_s = fg_emoji(fg["value"]) if fg else "N/A"
         mc = gdata.get("market_change_24h", 0) or 0
-        mc_emoji = "🟢" if mc >= 0 else "🔴"
+        me = "🟢" if mc >= 0 else "🔴"
         mg = f"**Market Cap:** {fmt_num(gdata.get('total_market_cap'))}\n"
         mg += f"**Volume Global:** {fmt_num(gdata.get('volume_24h'))}\n"
         mg += f"**BTC Dom:** {gdata.get('btc_dominance',0):.1f}% | **ETH Dom:** {gdata.get('eth_dominance',0):.1f}%\n"
         mg += f"**Fear & Greed:** {fg_s}\n"
-        mg += f"**Market 24h:** {mc_emoji} {mc:+.2f}%\n"
-        if gdata.get("market_change_24h", 0) and gdata["market_change_24h"] > 0:
-            mg += "**Trending:** 📈 Bullish"
-        elif gdata.get("market_change_24h", 0) and gdata["market_change_24h"] < 0:
-            mg += "**Trending:** 📉 Bearish"
-        else:
-            mg += "**Trending:** ➡️ Sideways"
+        mg += f"**Market 24h:** {me} {mc:+.2f}%\n"
+        if mc > 0: mg += "**Trending:** 📈 Bullish"
+        elif mc < 0: mg += "**Trending:** 📉 Bearish"
+        else: mg += "**Trending:** ➡️ Sideways"
     embed.add_field(name="🌐 Market Global", value=mg, inline=False)
-
-    # ---- BERITA ----
     if news and len(news) > 0:
-        news_lines = []
-        for i, n in enumerate(news, 1):
-            news_lines.append(f"**{i}.** [{n['title']}]({n['url']}) — *{n.get('source', '')}*")
-        embed.add_field(name="📰 Berita Terkini", value="\n".join(news_lines), inline=False)
+        lines = [f"**{i+1}.** [{n['title']}]({n['url']}) — *{n.get('source','')}*" for i, n in enumerate(news)]
+        embed.add_field(name="📰 Berita Terkini", value="\n".join(lines), inline=False)
     else:
         embed.add_field(name="📰 Berita Terkini", value="Tidak ada berita tersedia saat ini.", inline=False)
-
-    # ---- ANALISIS AI ----
     if analysis:
         lines = analysis.strip().split("\n")
         sections = []
-        current_section = []
-        current_title = None
+        cur_sec = []
+        cur_title = None
         for line in lines:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            is_title = (stripped.startswith("1.") or stripped.startswith("2.") or stripped.startswith("Ringkasan") or stripped.startswith("Analisis") or stripped.startswith("Teknikal"))
-            if is_title and current_title:
-                sections.append((current_title, "\n".join(current_section)))
-                current_section = []
-            if is_title:
-                clean = stripped.lstrip("0123456789.").strip()
-                if not clean.startswith("**"):
-                    clean = f"**{clean}**"
-                if clean.startswith("**Ringkasan") or clean.startswith("**Analisis Teknikal"):
-                    if "Ringkasan" in clean or "Pasar" in clean:
-                        current_title = f"📈 {clean}"
-                    else:
-                        current_title = f"🔍 {clean}"
-                else:
-                    current_title = clean
+            s = line.strip()
+            if not s: continue
+            is_t = s.startswith("1.") or s.startswith("2.") or s.startswith("Ringkasan") or s.startswith("Analisis")
+            if is_t and cur_title:
+                sections.append((cur_title, "\n".join(cur_sec)))
+                cur_sec = []
+            if is_t:
+                c = s.lstrip("0123456789.").strip()
+                if not c.startswith("**"): c = f"**{c}**"
+                if "Ringkasan" in c or "Pasar" in c: cur_title = f"📈 {c}"
+                elif "Teknikal" in c: cur_title = f"🔍 {c}"
+                else: cur_title = c
             else:
-                current_section.append(stripped)
-        if current_title and current_section:
-            sections.append((current_title, "\n".join(current_section)))
-
+                cur_sec.append(s)
+        if cur_title and cur_sec:
+            sections.append((cur_title, "\n".join(cur_sec)))
         if not sections and analysis.strip():
             sections.append(("🤖 Analisis AI", analysis.strip()))
-
         for title, content in sections:
-            remain = 1024
-            if len(content) > remain:
-                content = content[:remain].rsplit(" ", 1)[0] + "..."
+            if len(content) > 1024: content = content[:1024].rsplit(" ", 1)[0] + "..."
             embed.add_field(name=title, value=content, inline=False)
-
-    embed.set_footer(text="⚠️ Not Financial Advice | DYOR\nGroq AI | CryptoCompare | CoinCap | Alternative.me")
+    embed.set_footer(text="⚠️ Not Financial Advice | DYOR\nGroq AI | CryptoCompare | CoinCap | CoinGecko | Alternative.me")
     return embed
 
 async def generate_report():
@@ -294,8 +261,7 @@ async def generate_report():
         )
         btc, dxy, gdata, fg, news = [None if isinstance(r, Exception) else r for r in results]
         for name, r in zip(["BTC","DXY","Global","FG","News"], results):
-            if isinstance(r, Exception):
-                print(f"[{name} Error] {r}")
+            if isinstance(r, Exception): print(f"[{name} Error] {r}")
         analysis = await get_ai_analysis(session, btc, dxy, gdata, fg, news)
         return build_embed(btc, dxy, gdata, fg, news, analysis)
 
@@ -313,15 +279,14 @@ async def report(ctx):
         await ctx.send(embed=embed)
     except Exception as e:
         await ctx.send(f"❌ Error: {e}")
-        
+
 async def auto_post_loop():
     wib = pytz.timezone("Asia/Jakarta")
     await bot.wait_until_ready()
     while True:
         now = datetime.now(wib)
         target = now.replace(hour=REPORT_HOUR_WIB, minute=0, second=0, microsecond=0)
-        if now >= target:
-            target += timedelta(days=1)
+        if now >= target: target += timedelta(days=1)
         wait = (target - now).total_seconds()
         print(f"⏰ Next auto-post in {wait/3600:.1f} hours ({target.strftime('%Y-%m-%d %H:%M WIB')})")
         await asyncio.sleep(wait)
@@ -333,8 +298,6 @@ async def auto_post_loop():
                 print(f"✅ Auto-post sent")
             except Exception as e:
                 print(f"❌ Auto-post failed: {e}")
-        else:
-            print("❌ Channel not found!")
 
 if __name__ == "__main__":
     print("🚀 Starting bot...")
