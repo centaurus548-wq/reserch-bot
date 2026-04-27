@@ -18,19 +18,18 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
 async def fetch_json(session, url, retries=3):
     for attempt in range(retries):
         try:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15), headers=HEADERS) as resp:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15), headers=UA) as resp:
                 if resp.status == 200:
                     return await resp.json()
                 elif resp.status == 429:
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(3 ** attempt)
                 else:
                     print(f"[HTTP {resp.status}] {url}")
-                    return None
         except Exception as e:
             print(f"[Retry {attempt+1}] {url}: {e}")
             if attempt < retries - 1:
@@ -43,51 +42,38 @@ async def get_btc_data(session):
     if data and "RAW" in data:
         try:
             d = data["RAW"]["BTC"]["USDT"]
-            return {
-                "price": d.get("PRICE", 0), "change_24h": d.get("CHANGEPCT24HOUR", 0),
-                "high_24h": d.get("HIGH24HOUR", 0), "low_24h": d.get("LOW24HOUR", 0),
-                "volume_24h": d.get("TOTALVOLUME24HTO", 0), "mcap": d.get("MKTCAP", 0),
-            }
+            return {"price": d.get("PRICE", 0), "change_24h": d.get("CHANGEPCT24HOUR", 0), "high_24h": d.get("HIGH24HOUR", 0), "low_24h": d.get("LOW24HOUR", 0), "volume_24h": d.get("TOTALVOLUME24HTO", 0), "mcap": d.get("MKTCAP", 0)}
         except (KeyError, TypeError):
             pass
     url2 = "https://api.coincap.io/v2/assets/bitcoin"
     data2 = await fetch_json(session, url2)
     if data2 and "data" in data2:
         d = data2["data"]
-        return {
-            "price": float(d.get("priceUsd", 0)), "change_24h": float(d.get("changePercent24Hr", 0)),
-            "high_24h": 0, "low_24h": 0,
-            "volume_24h": float(d.get("volumeUsd24Hr", 0)), "mcap": float(d.get("marketCapUsd", 0)),
-        }
+        return {"price": float(d.get("priceUsd", 0)), "change_24h": float(d.get("changePercent24Hr", 0)), "high_24h": 0, "low_24h": 0, "volume_24h": float(d.get("volumeUsd24Hr", 0)), "mcap": float(d.get("marketCapUsd", 0))}
     return None
 
 async def get_global_data(session):
-    url = "https://api.coincap.io/v2/global"
+    # CoinGecko global (best data)
+    url = "https://api.coingecko.com/api/v3/global"
     data = await fetch_json(session, url)
     if data and "data" in data:
         d = data["data"]
-        mcap = float(d.get("marketCapUsd", 0))
-        vol = float(d.get("volume24hUsd", 0))
-        if mcap > 0:
-            return {
-                "total_market_cap": mcap, "volume_24h": vol,
-                "btc_dominance": float(d.get("btcDominance", 0)),
-                "eth_dominance": float(d.get("ethDominance", 0)),
-                "active_cryptos": int(d.get("assets", 0)),
-                "market_change_24h": float(d.get("marketCapChangePercentage24Hr", 0)),
-            }
-    url2 = "https://api.coingecko.com/api/v3/global"
+        mcap = d.get("total_market_cap", {}).get("usd", 0)
+        vol = d.get("total_volume", {}).get("usd", 0)
+        btc_d = d.get("market_cap_percentage", {}).get("btc", 0)
+        eth_d = d.get("market_cap_percentage", {}).get("eth", 0)
+        mc_ch = d.get("market_cap_change_percentage_24h_usd", 0)
+        if mcap > 0 and 30 < btc_d < 80:
+            return {"total_market_cap": mcap, "volume_24h": vol, "btc_dominance": btc_d, "eth_dominance": eth_d, "active_cryptos": d.get("active_cryptocurrencies", 0), "market_change_24h": mc_ch}
+    # CoinCap global
+    url2 = "https://api.coincap.io/v2/global"
     data2 = await fetch_json(session, url2)
     if data2 and "data" in data2:
         d = data2["data"]
-        return {
-            "total_market_cap": d["total_market_cap"]["usd"],
-            "volume_24h": d["total_volume"]["usd"],
-            "btc_dominance": d["market_cap_percentage"]["btc"],
-            "eth_dominance": d["market_cap_percentage"]["eth"],
-            "active_cryptos": d["active_cryptocurrencies"],
-            "market_change_24h": d["market_cap_change_percentage_24h_usd"],
-        }
+        mcap = float(d.get("marketCapUsd", 0))
+        btc_d = float(d.get("btcDominance", 0))
+        if mcap > 0 and 30 < btc_d < 80:
+            return {"total_market_cap": mcap, "volume_24h": float(d.get("volume24hUsd", 0)), "btc_dominance": btc_d, "eth_dominance": float(d.get("ethDominance", 0)), "active_cryptos": int(d.get("assets", 0)), "market_change_24h": float(d.get("marketCapChangePercentage24Hr", 0))}
     return None
 
 async def get_dxy_data(session):
@@ -102,8 +88,8 @@ async def get_dxy_data(session):
             usdcad = r.get("CAD", 1)
             usdsek = r.get("SEK", 1)
             usdchf = r.get("CHF", 1)
-            dxy = 50.14348112 * (eurusd**0.576) * (usdjpy**0.136) * (gbpusd**0.119) * (usdcad**0.091) * (usdsek**0.042) * (usdchf**0.036)
-            if 80 < dxy < 130:
+            dxy = 50.14348112 * (eurusd**(-0.576)) * (usdjpy**0.136) * (gbpusd**(-0.119)) * (usdcad**0.091) * (usdsek**0.042) * (usdchf**0.036)
+            if 90 < dxy < 120:
                 return {"dxy": dxy}
         except Exception:
             pass
@@ -249,16 +235,12 @@ def build_embed(btc, dxy, gdata, fg, news, analysis):
         for title, content in sections:
             if len(content) > 1024: content = content[:1024].rsplit(" ", 1)[0] + "..."
             embed.add_field(name=title, value=content, inline=False)
-    embed.set_footer(text="⚠️ Not Financial Advice | DYOR\nGroq AI | CryptoCompare | CoinCap | CoinGecko | Alternative.me")
+    embed.set_footer(text="⚠️ Not Financial Advice | DYOR\nGroq AI | CryptoCompare | CoinGecko | CryptoPanic | Alternative.me")
     return embed
 
 async def generate_report():
     async with aiohttp.ClientSession() as session:
-        results = await asyncio.gather(
-            get_btc_data(session), get_dxy_data(session),
-            get_global_data(session), get_fear_greed(session),
-            get_news(session), return_exceptions=True
-        )
+        results = await asyncio.gather(get_btc_data(session), get_dxy_data(session), get_global_data(session), get_fear_greed(session), get_news(session), return_exceptions=True)
         btc, dxy, gdata, fg, news = [None if isinstance(r, Exception) else r for r in results]
         for name, r in zip(["BTC","DXY","Global","FG","News"], results):
             if isinstance(r, Exception): print(f"[{name} Error] {r}")
