@@ -313,14 +313,12 @@ async def on_ready():
 
 @bot.command()
 async def report(ctx):
-    msg = await ctx.send("⏳ Generating report...")
     try:
         embed = await generate_report()
-        await msg.delete()
         await ctx.send(embed=embed)
     except Exception as e:
-        await msg.edit(content=f"❌ Error: {e}")
-
+        await ctx.send(f"❌ Error: {e}")
+        
 async def auto_post_loop():
     wib = pytz.timezone("Asia/Jakarta")
     await bot.wait_until_ready()
