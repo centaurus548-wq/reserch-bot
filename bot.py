@@ -104,25 +104,21 @@ async def get_fear_greed(session):
     return None
 
 async def get_news(session):
-    """Multi-source news: CryptoPanic → CryptoCompare → ForexFactory events"""
-    # Source 1: CryptoPanic
     url = "https://cryptopanic.com/api/free/v1/posts/?public=true&filter=rising&currencies=BTC,ETH&limit=5"
     data = await fetch(session, url)
     if data and "results" in data and len(data["results"]) > 0:
         return [{"title": i.get("title", ""), "url": i.get("url", ""), "source": i.get("source", {}).get("title", "")} for i in data["results"][:5]]
-    # Source 2: CryptoCompare
     url2 = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest&limit=5"
     data2 = await fetch(session, url2)
     if data2 and "Data" in data2 and len(data2["Data"]) > 0:
         return [{"title": i.get("title", ""), "url": i.get("url", ""), "source": i.get("source", "")} for i in data2["Data"][:5]]
-    # Source 3: Forex Factory events as news fallback
     ff = await get_ff_events(session)
     if ff:
-        return [{"title": f"🇺🇸 {e['title']} (Forecast: {e['forecast']}, Previous: {e['previous']})", "url": "https://www.forexfactory.com/calendar", "source": "Forex Factory"} for e in ff[:5]]
+        return [{"title": f"[USD] {e['title']} (Forecast: {e['forecast']}, Previous: {e['previous']})", "url": "https://www.forexfactory.com/calendar", "source": "Forex Factory"} for e in ff[:5]]
     return None
 
 async def get_ff_events(session):
-    """Forex Factory calendar JSON API - USD events only"""
+    """Forex Factory calendar - USD events only"""
     url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     data = await fetch(session, url)
     if not data or not isinstance(data, list):
@@ -145,14 +141,18 @@ async def get_ff_events(session):
             dt = datetime.strptime(date[:19], "%Y-%m-%dT%H:%M:%S")
             dt_wib = dt.astimezone(wib)
             time_str = dt_wib.strftime("%H:%M")
-            date_str = dt_wib.strftime("%A, %d %B %Y")
+            day_name = dt_wib.strftime("%A")
+            date_str = dt_wib.strftime("%d %B")
+            full_date = f"{day_name}, {date_str}"
             is_today = today_str in date
+            is_released = bool(actual and actual.strip() and actual.strip() != "-")
         except Exception:
             time_str = "-"
-            date_str = "-"
+            full_date = "-"
             is_today = False
-        events.append({"time": time_str, "date": date_str, "is_today": is_today, "currency": "USD", "title": title, "impact": impact, "forecast": forecast if forecast else "-", "previous": previous if previous else "-", "actual": actual if actual else "-"})
-    events.sort(key=lambda x: (not x["is_today"], x["time"]))
+            is_released = False
+        events.append({"time": time_str, "date": full_date, "is_today": is_today, "is_released": is_released, "currency": "USD", "title": title, "impact": impact, "forecast": forecast if forecast else "-", "previous": previous if previous else "-", "actual": actual if actual else "-"})
+    events.sort(key=lambda x: (x["date"], x["time"]))
     return events if events else None
 
 # ===================== AI ANALYSIS =====================
@@ -195,7 +195,7 @@ Buat analisis dalam 2 bagian:
 1. Ringkasan Pasar - rangkum data harga, volume, market cap, DXY
 2. Analisis Teknikal BTC/USDT - analisis high/low, dominasi BTC, fear & greed, dampak DXY
 
-Jawab padat dalam Bahasa Indonesia, maks 300 kata."""
+Jawab padat dalam Bahasa Indonesia, maks 300 kata. Jangan gunakan emoji berlebihan."""
     try:
         async with session.post("https://api.groq.com/openai/v1/chat/completions",
             json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1200, "temperature": 0.7},
@@ -215,7 +215,8 @@ async def get_macro_analysis(session, events):
     if events:
         ev_list = []
         for e in events[:8]:
-            ev_list.append(f"Event: {e['title']}\nWaktu: {e['time']} WIB | Impact: {e['impact']}\nForecast: {e['forecast']} | Previous: {e['previous']} | Actual: {e['actual']}")
+            status = "SUDAH RILIS" if e.get("is_released") else "BELUM RILIS"
+            ev_list.append(f"Event: {e['title']}\nWaktu: {e['date']} pukul {e['time']} WIB | Impact: {e['impact']}\nForecast: {e['forecast']} | Previous: {e['previous']} | Actual: {e['actual']} | Status: {status}")
         ev_str = "\n\n---\n\n".join(ev_list)
         prompt = f"""Kamu analis forex & makroekonomi senior. Buat EVENT BRIEF detail untuk SETIAP event ekonomi USD dalam Bahasa Indonesia.
 
@@ -224,29 +225,29 @@ HARI INI: {today}
 EVENT:
 {ev_str}
 
-Untuk SETIAP event, buat analisis lengkap dengan format ini (tulisan Bahasa Indonesia):
+Untuk SETIAP event, buat analisis lengkap dengan format ini (tanpa emoji berlebihan):
 
 **NAMA EVENT**
-{today} • Rilis HH:MM WIB
-Perkiraan: X.X% | Sebelumnya: X.X% | Probabilitas: BEAT/MISS/IN-LINE
+{today} / HARI, TANGGAL BULAN - Pukul HH:MM WIB
+Perkiraan: X.X% | Sebelumnya: X.X% | Status: SUDAH/BELUM RILIS
 
 **Research**
-[Jelaskan konteks historis event ini. Data release sebelumnya bagaimana? Tren terkini apa? Kebijakan The Fed/FOMC terkait event ini? Bagaimana reaksi pasar sebelumnya?]
+[Jelaskan konteks historis event ini. Data release sebelumnya bagaimana? Tren terkini? Kebijakan The Fed/FOMC terkait? Minimal 3 kalimat.]
 
 **Proyeksi**
-[Proyeksi dampak ke DXY Index dan USD. Jika forecast beat/miss, bagaimana efek ke DXY? Dampak langsung ke BTC/USDT dan pasar crypto? Bagaimana korelasi DXY-BTC saat ini?]
+[Proyeksi dampak ke DXY Index dan USD. Jika beat/miss forecast, bagaimana efek ke DXY? Dampak ke BTC/USDT dan pasar crypto? Minimal 3 kalimat.]
 
 **Wildcard**
-[Faktor risiko tak terduga. Apa yang bisa membuat hasil di luar ekspektasi? Event geopolitik atau data lain yang bisa mempengaruhi?]
+[Faktor risiko tak terduga. Apa yang bisa membuat hasil di luar ekspektasi? Minimal 2 kalimat.]
 
 **Terdampak**
-[Daftar pair: EURUSD • GBPUSD • USDJPY • BTC/USDT • ETH/USDT dll]
+[Pair forex dan crypto: EURUSD - GBPUSD - USDJPY - BTC/USDT - ETH/USDT]
 
 PENTING:
-- Wajib Bahasa Indonesia
+- Bahasa Indonesia
 - Maks 200 kata per event
-- Setiap bagian harus punya isi yang substansial, jangan 1 kalimat
-- Gunakan data forecast/previous yang diberikan"""
+- Setiap bagian harus substansial
+- Jangan gunakan emoji berlebihan"""
     else:
         prompt = f"""Kamu analis forex & makroekonomi senior. Hari ini {today}.
 Tidak ada event USD berdampak tinggi hari ini.
@@ -254,11 +255,10 @@ Tidak ada event USD berdampak tinggi hari ini.
 Buat outlook makro lengkap dalam Bahasa Indonesia:
 - Kondisi DXY Index terkini dan tren
 - Kebijakan The Fed / FOMC terbaru
-- Event ekonomi penting minggu ini yang perlu diwaspadai (CPI, NFP, GDP, PPI, rate decision)
+- Event ekonomi penting minggu ini
 - Dampak ke BTC/USDT dan pasar crypto
-- Sentimen pasar global
 
-Jawab detail dan substansial, maks 300 kata."""
+Jawab detail, maks 300 kata."""
     try:
         async with session.post("https://api.groq.com/openai/v1/chat/completions",
             json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "max_tokens": 2500, "temperature": 0.7},
@@ -270,6 +270,41 @@ Jawab detail dan substansial, maks 300 kata."""
         print(f"[Macro AI Error] {e}")
     return None
 
+async def get_realtime_alert(session, event, btc_now, dxy_now):
+    """AI analysis for realtime event alert"""
+    if not GROQ:
+        return None
+    btc_p = f"${btc_now['price']:,.2f}" if btc_now and btc_now.get("price") else "N/A"
+    btc_c = f"{btc_now['change_24h']:+.2f}%" if btc_now and btc_now.get("change_24h") else "N/A"
+    dxy_v = f"{dxy_now['dxy']:.2f}" if dxy_now else "N/A"
+    prompt = f"""Data ekonomi USD baru saja rilis. Buat analisis singkat dalam Bahasa Indonesia.
+
+EVENT: {event['title']}
+Waktu: {event['date']} {event['time']} WIB
+Forecast: {event['forecast']}
+Previous: {event['previous']}
+ACTUAL: {event['actual']}
+
+BTC/USDT saat ini: {btc_p} ({btc_c})
+DXY Index saat ini: {dxy_v}
+
+Analisis dalam 3 bagian singkat:
+1. Hasil - apakah beat/miss/in-line forecast? Apa artinya?
+2. Dampak - dampak ke DXY, USD, dan pasar crypto
+3. Saran - apa yang harus dilakukan trader? entry, hold, atau avoid?
+
+Jawab padat, maks 150 kata. Tanpa emoji berlebihan."""
+    try:
+        async with session.post("https://api.groq.com/openai/v1/chat/completions",
+            json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "max_tokens": 800, "temperature": 0.7},
+            headers={"Authorization": f"Bearer {GROQ}", "Content-Type": "application/json"},
+            timeout=aiohttp.ClientTimeout(total=20)) as resp:
+            if resp.status == 200:
+                return (await resp.json())["choices"][0]["message"]["content"]
+    except Exception:
+        pass
+    return None
+
 # ===================== FORMAT HELPERS =====================
 
 def fmt_num(n):
@@ -277,52 +312,49 @@ def fmt_num(n):
     return f"${n:,.0f}"
 
 def fg_emoji(v):
-    if not v: return "⚪ N/A"
-    if v <= 20: return f"😱 {v} Extreme Fear"
-    elif v <= 40: return f"😟 {v} Fear"
-    elif v <= 60: return f"😐 {v} Neutral"
-    elif v <= 80: return f"😊 {v} Greed"
-    else: return f"🤑 {v} Extreme Greed"
+    if not v: return "N/A"
+    if v <= 20: return f"{v} Extreme Fear"
+    elif v <= 40: return f"{v} Fear"
+    elif v <= 60: return f"{v} Neutral"
+    elif v <= 80: return f"{v} Greed"
+    else: return f"{v} Extreme Greed"
 
-IMPACT_ICONS = {"HIGH": "🔴", "MEDIUM": "🟡"}
+IMPACT_ICONS = {"HIGH": "HIGH", "MEDIUM": "MED"}
 
 # ===================== EMBED BUILDERS =====================
 
 def build_embed(btc, dxy, gdata, fg, news, analysis):
     now = datetime.now(pytz.timezone("Asia/Jakarta"))
-    embed = discord.Embed(title=f"📊 Laporan Pasar Crypto Harian — {now.strftime('%d %B %Y')}", color=discord.Color.orange(), timestamp=now)
-    # DATA PASAR
+    embed = discord.Embed(title=f"Laporan Pasar Crypto Harian - {now.strftime('%d %B %Y')}", color=discord.Color.orange(), timestamp=now)
     dp = "Data tidak tersedia"
     if btc:
         ch = btc.get("change_24h", 0) or 0
-        e = "🟢" if ch >= 0 else "🔴"
-        dp = f"**BTC/USDT:** ${btc['price']:,.2f} ({e} {ch:+.2f}% 24h)\n"
+        arrow = "+" if ch >= 0 else ""
+        dp = f"**BTC/USDT:** ${btc['price']:,.2f} ({arrow}{ch:.2f}% 24h)\n"
         dp += f"**High/Low:** ${btc['high_24h']:,.2f} / ${btc['low_24h']:,.2f}\n"
         dp += f"**Volume 24h:** {fmt_num(btc.get('volume_24h'))}\n"
         dp += f"**DXY Index:** {dxy['dxy']:.2f}" if dxy else "**DXY Index:** N/A"
-    embed.add_field(name="📈 Data Pasar", value=dp, inline=False)
-    # MARKET GLOBAL
+    embed.add_field(name="Data Pasar", value=dp, inline=False)
     mg = "Data tidak tersedia"
     if gdata:
         fg_s = fg_emoji(fg["value"]) if fg else "N/A"
         mc = gdata.get("market_change_24h", 0) or 0
-        me = "🟢" if mc >= 0 else "🔴"
+        me = "+" if mc >= 0 else ""
         mg = f"**Market Cap:** {fmt_num(gdata.get('total_market_cap'))}\n"
         mg += f"**Volume Global:** {fmt_num(gdata.get('volume_24h'))}\n"
         mg += f"**BTC Dom:** {gdata.get('btc_dominance', 0):.1f}% | **ETH Dom:** {gdata.get('eth_dominance', 0):.1f}%\n"
         mg += f"**Fear & Greed:** {fg_s}\n"
-        mg += f"**Market 24h:** {me} {mc:+.2f}%\n"
-        if mc > 0: mg += "**Trending:** 📈 Bullish"
-        elif mc < 0: mg += "**Trending:** 📉 Bearish"
-        else: mg += "**Trending:** ➡️ Sideways"
-    embed.add_field(name="🌐 Market Global", value=mg, inline=False)
-    # BERITA
+        mg += f"**Market 24h:** {me}{mc:.2f}%\n"
+        if mc > 0: mg += "**Trending:** Bullish"
+        elif mc < 0: mg += "**Trending:** Bearish"
+        else: mg += "**Trending:** Sideways"
+    embed.add_field(name="Market Global", value=mg, inline=False)
     if news and len(news) > 0:
-        lines = [f"**{i+1}.** [{n['title']}]({n['url']}) — *{n.get('source', '')}*" for i, n in enumerate(news)]
-        embed.add_field(name="📰 Berita Terkini", value="\n".join(lines), inline=False)
+        lines = [f"**{i+1}.** [{n['title']}]({n['url']}) - *{n.get('source', '')}*" for i, n in enumerate(news)]
+        embed.add_field(name="Berita Terkini", value="\n".join(lines), inline=False)
     else:
-        embed.add_field(name="📰 Berita Terkini", value="Tidak ada berita tersedia saat ini.", inline=False)
-    # AI ANALISIS
+        embed.add_field(name="Berita Terkini", value="Tidak ada berita tersedia saat ini.", inline=False)
+    # AI ANALYSIS - always show
     if analysis:
         lines = analysis.strip().split("\n")
         sections = []
@@ -338,41 +370,37 @@ def build_embed(btc, dxy, gdata, fg, news, analysis):
             if is_t:
                 c = s.lstrip("0123456789.").strip()
                 if not c.startswith("**"): c = f"**{c}**"
-                if "Ringkasan" in c or "Pasar" in c: cur_title = f"📈 {c}"
-                elif "Teknikal" in c: cur_title = f"🔍 {c}"
+                if "Ringkasan" in c or "Pasar" in c: cur_title = f"{c}"
+                elif "Teknikal" in c: cur_title = f"{c}"
                 else: cur_title = c
             else:
                 cur_sec.append(s)
         if cur_title and cur_sec:
             sections.append((cur_title, "\n".join(cur_sec)))
         if not sections and analysis.strip():
-            sections.append(("🤖 Analisis AI", analysis.strip()))
+            sections.append(("Analisis AI", analysis.strip()))
         for title, content in sections:
             if len(content) > 1024: content = content[:1024].rsplit(" ", 1)[0] + "..."
             embed.add_field(name=title, value=content, inline=False)
-    embed.set_footer(text="⚠️ Not Financial Advice | DYOR\nGroq AI | CryptoCompare | CoinGecko | CryptoPanic | Forex Factory | Alternative.me")
+    embed.set_footer(text="Not Financial Advice | DYOR\nGroq AI | CryptoCompare | CoinGecko | CryptoPanic | Forex Factory")
     return embed
 
 def build_macro_embed(events, analysis):
     now = datetime.now(pytz.timezone("Asia/Jakarta"))
-    embed = discord.Embed(title=f"🇺🇸 Economic Calendar (USD) — {now.strftime('%d %B %Y')}", description="Event makroekonomi USD berdampak tinggi", color=discord.Color.orange(), timestamp=now)
-    # EVENT LIST
+    embed = discord.Embed(title=f"Economic Calendar (USD) - {now.strftime('%d %B %Y')}", description="Event makroekonomi USD berdampak tinggi", color=discord.Color.orange(), timestamp=now)
     if events:
         ev_text = ""
-        today_count = 0
         for e in events[:10]:
-            impact = IMPACT_ICONS.get(e.get("impact", "HIGH"), "🔴")
-            actual = f" | ✅ Aktual: {e['actual']}" if e.get("actual") and e["actual"] not in ["-", ""] else ""
+            impact = IMPACT_ICONS.get(e.get("impact", "HIGH"), "HIGH")
+            actual = f" | Aktual: {e['actual']}" if e.get("is_released") else ""
             if e.get("is_today"):
-                ev_text += f"{impact} **{e['title']}** — ⏰ {e['time']} WIB 📌 HARI INI\n"
-                today_count += 1
+                ev_text += f"[{impact}] **{e['title']}** - {e['time']} WIB (HARI INI)\n"
             else:
-                ev_text += f"{impact} **{e['title']}** — ⏰ {e['time']} WIB\n"
+                ev_text += f"[{impact}] **{e['title']}** - {e['date']}, {e['time']} WIB\n"
             ev_text += f"Forecast: {e['forecast']} | Previous: {e['previous']}{actual}\n\n"
-        embed.add_field(name=f"📅 {today_count} Event Hari Ini + Minggu Ini", value=ev_text.strip(), inline=False)
+        embed.add_field(name="Event Minggu Ini", value=ev_text.strip(), inline=False)
     else:
-        embed.add_field(name="ℹ️", value="Tidak ada event USD berdampak tinggi minggu ini.", inline=False)
-    # DETAILED AI ANALYSIS
+        embed.add_field(name="Info", value="Tidak ada event USD berdampak tinggi minggu ini.", inline=False)
     if analysis:
         lines = analysis.strip().split("\n")
         sections = []
@@ -382,44 +410,67 @@ def build_macro_embed(events, analysis):
         for line in lines:
             s = line.strip()
             if not s: continue
-            # Detect section headers
-            is_header = False
             clean = s.replace("**", "").strip().upper()
-            for k in section_keys:
-                if clean.startswith(k):
-                    is_header = True
-                    if cur_title and cur:
-                        sections.append((cur_title, "\n".join(cur)))
-                        cur = []
-                    cur_title = f"**{s.replace('**', '').strip()}**"
-                    break
-            # Detect event title (event names)
-            if not is_header:
-                is_event = False
-                for word in ["CPI", "NFP", "GDP", "PPI", "FOMC", "RATE", "EMPLOYMENT", "RETAIL", "PMI", "ISM", "JOBLESS", "UNEMPLOYMENT", "NONFARM", "CONSUMER", "MANUFACTURING"]:
-                    if word in clean:
-                        is_event = True
-                        break
-                if is_event and (s.startswith("**") or len(s) < 60):
-                    if cur_title and cur:
-                        sections.append((cur_title, "\n".join(cur)))
-                        cur = []
-                    t = s.replace("**", "").strip()
-                    if not t.startswith("🇺🇸"):
-                        t = f"🇺🇸 EVENT BRIEF — {t}"
-                    cur_title = f"**{t}**"
-                else:
-                    cur.append(s)
-            elif not is_header:
+            is_header = any(clean.startswith(k) for k in section_keys)
+            is_event = any(w in clean for w in ["CPI", "NFP", "GDP", "PPI", "FOMC", "RATE", "EMPLOYMENT", "RETAIL", "PMI", "ISM", "JOBLESS", "UNEMPLOYMENT", "NONFARM", "CONSUMER", "MANUFACTURING", "PRESIDENT", "FEDERAL FUNDS"])
+            if is_header:
+                if cur_title and cur:
+                    sections.append((cur_title, "\n".join(cur)))
+                    cur = []
+                cur_title = f"**{s.replace('**', '').strip()}**"
+            elif is_event and (s.startswith("**") or len(s) < 80):
+                if cur_title and cur:
+                    sections.append((cur_title, "\n".join(cur)))
+                    cur = []
+                t = s.replace("**", "").strip()
+                cur_title = f"**EVENT BRIEF - {t}**"
+            else:
                 cur.append(s)
         if cur_title and cur:
             sections.append((cur_title, "\n".join(cur)))
         if not sections and analysis.strip():
-            sections.append(("🇺🇸 Analisis Makro", analysis.strip()))
+            sections.append(("Analisis Makro", analysis.strip()))
         for title, content in sections:
             if len(content) > 1024: content = content[:1024].rsplit(" ", 1)[0] + "..."
             embed.add_field(name=title, value=content, inline=False)
-    embed.set_footer(text="⚠️ Research brief — tunggu konfirmasi angka sebelum entry. Bukan sinyal langsung.\nData: Forex Factory | Analysis: Groq AI")
+    embed.set_footer(text="Research brief - tunggu konfirmasi angka sebelum entry. Bukan sinyal langsung.\nData: Forex Factory | Analysis: Groq AI")
+    return embed
+
+def build_realtime_embed(event, btc, dxy, analysis):
+    now = datetime.now(pytz.timezone("Asia/Jakarta"))
+    actual = event.get("actual", "-")
+    forecast = event.get("forecast", "-")
+    if actual != "-" and forecast != "-" and forecast != "":
+        try:
+            a = float(actual.replace("%", "").replace("K", "").replace("B", "").replace("M", "").strip())
+            f = float(forecast.replace("%", "").replace("K", "").replace("B", "").replace("M", "").strip())
+            if a > f:
+                verdict = "BEAT (lebih tinggi dari forecast)"
+            elif a < f:
+                verdict = "MISS (lebih rendah dari forecast)"
+            else:
+                verdict = "IN-LINE (sesuai forecast)"
+        except Exception:
+            verdict = "Data rilis"
+    else:
+        verdict = "Data rilis"
+    embed = discord.Embed(
+        title=f"DATA RILIS: {event['title']}",
+        description=f"{event['date']} | {event['time']} WIB",
+        color=discord.Color.orange(),
+        timestamp=now,
+    )
+    detail = f"**Forecast:** {forecast}\n**Previous:** {event['previous']}\n**Actual:** {actual}\n**Verdict:** {verdict}"
+    embed.add_field(name="Data", value=detail, inline=False)
+    if btc:
+        ch = btc.get("change_24h", 0) or 0
+        embed.add_field(name="BTC/USDT Sekarang", value=f"${btc['price']:,.2f} ({ch:+.2f}%)", inline=False)
+    if dxy:
+        embed.add_field(name="DXY Index Sekarang", value=f"{dxy['dxy']:.2f}", inline=False)
+    if analysis:
+        if len(analysis) > 1024: analysis = analysis[:1024].rsplit(" ", 1)[0] + "..."
+        embed.add_field(name="Analisis & Saran", value=analysis, inline=False)
+    embed.set_footer(text="Not Financial Advice | DYOR\nForex Factory | Groq AI")
     return embed
 
 # ===================== REPORT GENERATORS =====================
@@ -439,14 +490,53 @@ async def generate_macro():
         analysis = await get_macro_analysis(session, events)
         return build_macro_embed(events, analysis)
 
+# ===================== REALTIME MONITOR =====================
+
+last_alerted = set()
+
+async def realtime_monitor():
+    """Check every 2 minutes for newly released data, post immediately"""
+    await bot.wait_until_ready()
+    await asyncio.sleep(60)  # Wait 1 min after bot start
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                events = await get_ff_events(session)
+                if not events:
+                    await asyncio.sleep(120)
+                    continue
+                newly_released = []
+                for e in events:
+                    eid = f"{e['title']}_{e['date']}_{e['time']}"
+                    if e.get("is_released") and eid not in last_alerted:
+                        newly_released.append(e)
+                        last_alerted.add(eid)
+                for e in newly_released:
+                    channel = bot.get_channel(CHAN)
+                    if not channel:
+                        continue
+                    # Get current BTC & DXY for context
+                    results = await asyncio.gather(get_btc_data(session), get_dxy_data(session), return_exceptions=True)
+                    btc = None if isinstance(results[0], Exception) else results[0]
+                    dxy = None if isinstance(results[1], Exception) else results[1]
+                    analysis = await get_realtime_alert(session, e, btc, dxy)
+                    embed = build_realtime_embed(e, btc, dxy, analysis)
+                    await channel.send(embed=embed)
+                    print(f"[Realtime] Posted: {e['title']} - Actual: {e['actual']}")
+        except Exception as ex:
+            print(f"[Realtime Error] {ex}")
+        await asyncio.sleep(120)  # Check every 2 minutes
+
 # ===================== BOT COMMANDS =====================
 
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
-    print(f"📡 Channel ID: {CHAN}")
-    print(f"⏰ Auto-post at {HOUR}:00 WIB")
+    print(f"Logged in as {bot.user}")
+    print(f"Channel ID: {CHAN}")
+    print(f"Auto-post at {HOUR}:00 WIB")
+    print(f"Realtime monitoring: active")
     bot.loop.create_task(auto_post_loop())
+    bot.loop.create_task(realtime_monitor())
 
 @bot.command()
 async def report(ctx):
@@ -454,17 +544,15 @@ async def report(ctx):
         embed = await generate_report()
         await ctx.send(embed=embed)
     except Exception as e:
-        await ctx.send(f"❌ Error: {e}")
+        await ctx.send(f"Error: {e}")
 
 @bot.command()
 async def macro(ctx):
-    msg = await ctx.send("⏳ Fetching economic calendar...")
     try:
         embed = await generate_macro()
-        await msg.delete()
         await ctx.send(embed=embed)
     except Exception as e:
-        await msg.edit(content=f"❌ Error: {e}")
+        await ctx.send(f"Error: {e}")
 
 # ===================== AUTO POST =====================
 
@@ -476,7 +564,7 @@ async def auto_post_loop():
         target = now.replace(hour=HOUR, minute=0, second=0, microsecond=0)
         if now >= target: target += timedelta(days=1)
         wait = (target - now).total_seconds()
-        print(f"⏰ Next auto-post in {wait/3600:.1f} hours ({target.strftime('%Y-%m-%d %H:%M WIB')})")
+        print(f"Next auto-post in {wait/3600:.1f} hours ({target.strftime('%Y-%m-%d %H:%M WIB')})")
         await asyncio.sleep(wait)
         channel = bot.get_channel(CHAN)
         if channel:
@@ -486,15 +574,15 @@ async def auto_post_loop():
                 await asyncio.sleep(3)
                 embed2 = await generate_macro()
                 await channel.send(embed=embed2)
-                print(f"✅ Auto-post sent ({datetime.now(wib).strftime('%H:%M WIB')})")
+                print(f"Auto-post sent ({datetime.now(wib).strftime('%H:%M WIB')})")
             except Exception as e:
-                print(f"❌ Auto-post failed: {e}")
+                print(f"Auto-post failed: {e}")
 
 # ===================== MAIN =====================
 
 if __name__ == "__main__":
-    print("🚀 Starting bot...")
+    print("Starting bot...")
     if TOKEN:
         bot.run(TOKEN)
     else:
-        print("❌ DISCORD_BOT_TOKEN not set!")
+        print("DISCORD_BOT_TOKEN not set!")
