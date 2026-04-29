@@ -5,7 +5,6 @@ import asyncio
 import os
 import json
 import requests as req_lib
-import urllib.request
 from datetime import datetime, timedelta
 import pytz
 
@@ -23,6 +22,10 @@ wib = pytz.timezone("Asia/Jakarta")
 HARI = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 BULAN = ["Januari", "Februari", "Maret", "April", "Mei", "Juni",
          "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
+
+FF_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+FF_PROXY = "https://api.allorigins.win/raw?url=" + FF_URL
+FF_PROXY2 = "https://corsproxy.io/?" + FF_URL
 
 
 async def fetch_json(url, retries=3):
@@ -92,22 +95,14 @@ async def get_btc_data():
     data = await fetch_json("https://min-api.cryptocompare.com/data/pricemultifull?fsyms=BTC&tsyms=USDT")
     if data and "RAW" in data and "BTC" in data["RAW"] and "USDT" in data["RAW"]["BTC"]:
         d = data["RAW"]["BTC"]["USDT"]
-        return {
-            "price": d.get("PRICE", 0),
-            "change_24h": d.get("CHANGEPCT24HOUR", 0),
-            "high": d.get("HIGH24HOUR", 0),
-            "low": d.get("LOW24HOUR", 0),
-            "volume": d.get("TOTALVOLUME24HTO", 0)
-        }
+        return {"price": d.get("PRICE", 0), "change_24h": d.get("CHANGEPCT24HOUR", 0),
+                "high": d.get("HIGH24HOUR", 0), "low": d.get("LOW24HOUR", 0),
+                "volume": d.get("TOTALVOLUME24HTO", 0)}
     data = await fetch_json("https://api.coincap.io/v2/assets/bitcoin")
     if data and "data" in data:
         d = data["data"]
-        return {
-            "price": float(d.get("priceUsd", 0)),
-            "change_24h": float(d.get("changePercent24Hr", 0)),
-            "high": 0, "low": 0,
-            "volume": float(d.get("volumeUsd24Hr", 0))
-        }
+        return {"price": float(d.get("priceUsd", 0)), "change_24h": float(d.get("changePercent24Hr", 0)),
+                "high": 0, "low": 0, "volume": float(d.get("volumeUsd24Hr", 0))}
     return {"price": 0, "change_24h": 0, "high": 0, "low": 0, "volume": 0}
 
 
@@ -118,21 +113,15 @@ async def get_global_data():
         btc_dom = d.get("market_cap_percentage", {}).get("btc", 0)
         eth_dom = d.get("market_cap_percentage", {}).get("eth", 0)
         if 30 <= btc_dom <= 80:
-            return {
-                "market_cap": d.get("total_market_cap", {}).get("usd", 0),
-                "volume": d.get("total_volume", {}).get("usd", 0),
-                "btc_dom": btc_dom, "eth_dom": eth_dom,
-                "change_24h": d.get("market_cap_change_percentage_24h_usd", 0)
-            }
+            return {"market_cap": d.get("total_market_cap", {}).get("usd", 0),
+                    "volume": d.get("total_volume", {}).get("usd", 0),
+                    "btc_dom": btc_dom, "eth_dom": eth_dom,
+                    "change_24h": d.get("market_cap_change_percentage_24h_usd", 0)}
     data = await fetch_json("https://api.coincap.io/v2/global")
     if data and "data" in data:
         d = data["data"]
-        return {
-            "market_cap": float(d.get("marketCap", 0)),
-            "volume": float(d.get("volume", 0)),
-            "btc_dom": float(d.get("btcDominance", 0)),
-            "eth_dom": 0, "change_24h": 0
-        }
+        return {"market_cap": float(d.get("marketCap", 0)), "volume": float(d.get("volume", 0)),
+                "btc_dom": float(d.get("btcDominance", 0)), "eth_dom": 0, "change_24h": 0}
     return {"market_cap": 0, "volume": 0, "btc_dom": 0, "eth_dom": 0, "change_24h": 0}
 
 
@@ -140,13 +129,7 @@ async def get_dxy_data():
     data = await fetch_json("https://api.exchangerate-api.com/v4/latest/USD")
     if data and "rates" in data:
         r = data["rates"]
-        eur = r.get("EUR", 1)
-        gbp = r.get("GBP", 1)
-        jpy = r.get("JPY", 1)
-        cad = r.get("CAD", 1)
-        sek = r.get("SEK", 1)
-        chf = r.get("CHF", 1)
-        dxy = 50.14348112 * (eur ** -0.576) * (jpy ** 0.136) * (gbp ** -0.119) * (cad ** 0.091) * (sek ** 0.042) * (chf ** 0.036)
+        dxy = 50.14348112 * (r.get("EUR",1)**-0.576) * (r.get("JPY",1)**0.136) * (r.get("GBP",1)**-0.119) * (r.get("CAD",1)**0.091) * (r.get("SEK",1)**0.042) * (r.get("CHF",1)**0.036)
         if 90 <= dxy <= 120:
             return round(dxy, 2)
     return None
@@ -188,15 +171,13 @@ async def get_news():
     ff = await get_ff_events()
     if ff:
         for e in ff[:5]:
-            news.append({
-                "title": "[USD] " + e["title"] + " (Forecast: " + str(e.get("forecast", "N/A")) + ")",
-                "url": "https://www.forexfactory.com/calendar"
-            })
+            news.append({"title": "[USD] " + e["title"] + " (Forecast: " + str(e.get("forecast", "N/A")) + ")",
+                         "url": "https://www.forexfactory.com/calendar"})
         return news if news else [{"title": "Tidak ada berita tersedia", "url": ""}]
     return [{"title": "Tidak ada berita tersedia", "url": ""}]
 
 
-def _parse_ff_events(data):
+def _parse_ff(data):
     events = []
     for e in data:
         if e.get("country") != "USD":
@@ -206,8 +187,7 @@ def _parse_ff_events(data):
             continue
         date_raw = e.get("date", "")
         events.append({
-            "title": e.get("title", "Unknown"),
-            "date_raw": date_raw,
+            "title": e.get("title", "Unknown"), "date_raw": date_raw,
             "time_wib": format_wib_time(date_raw),
             "date_short": date_raw[:10] if date_raw else "N/A",
             "is_today": is_today(date_raw),
@@ -220,73 +200,60 @@ def _parse_ff_events(data):
     return events
 
 
-def _ff_fetch_requests(url):
-    """Fetch FF using requests library (different HTTP stack, bypasses CDN blocks)"""
+def _try_fetch(url):
+    """Sync fetch using requests library"""
     try:
-        resp = req_lib.get(url, headers={"User-Agent": UA}, timeout=15)
-        print("[FF-req] status=" + str(resp.status_code))
-        if resp.status_code == 200:
-            data = resp.json()
-            if isinstance(data, list) and len(data) > 0:
-                return data
+        r = req_lib.get(url, headers={"User-Agent": UA}, timeout=15)
+        if r.status_code == 200:
+            d = r.json()
+            if isinstance(d, list) and len(d) > 0:
+                return d
     except Exception as e:
-        print("[FF-req] failed: " + str(e))
-    return None
-
-
-def _ff_fetch_urllib(url):
-    """Fetch FF using urllib (yet another HTTP stack)"""
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        resp = urllib.request.urlopen(req, timeout=15)
-        raw = resp.read().decode("utf-8")
-        data = json.loads(raw)
-        if isinstance(data, list) and len(data) > 0:
-            return data
-    except Exception as e:
-        print("[FF-url] failed: " + str(e))
+        print("[fetch] " + url + " failed: " + str(e))
     return None
 
 
 async def get_ff_events():
-    print("[FF] Fetching events...")
+    print("[FF] Fetching...")
 
-    urls = [
-        "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-    ]
+    # 1. Direct via requests
+    d = _try_fetch(FF_URL)
+    if d:
+        print("[FF] direct OK: " + str(len(d)))
+        return _parse_ff(d)
 
-    for url in urls:
-        # Method 1: requests library (different HTTP stack)
-        data = _ff_fetch_requests(url)
-        if data:
-            print("[FF] requests OK: " + str(len(data)) + " events")
-            return _parse_ff_events(data)
+    # 2. Proxy allorigins
+    d = _try_fetch(FF_PROXY)
+    if d:
+        print("[FF] allorigins OK: " + str(len(d)))
+        return _parse_ff(d)
 
-        # Method 2: urllib (different again)
-        data = _ff_fetch_urllib(url)
-        if data:
-            print("[FF] urllib OK: " + str(len(data)) + " events")
-            return _parse_ff_events(data)
+    # 3. Proxy corsproxy
+    d = _try_fetch(FF_PROXY2)
+    if d:
+        print("[FF] corsproxy OK: " + str(len(d)))
+        return _parse_ff(d)
 
-        # Method 3: aiohttp
-        data = await fetch_json(url)
-        if data and isinstance(data, list) and len(data) > 0:
-            print("[FF] aiohttp OK: " + str(len(data)) + " events")
-            return _parse_ff_events(data)
+    # 4. aiohttp direct
+    d = await fetch_json(FF_URL)
+    if d and isinstance(d, list) and len(d) > 0:
+        print("[FF] aiohttp OK: " + str(len(d)))
+        return _parse_ff(d)
 
-    # Method 4: next week via requests
-    url2 = "https://nfs.faireconomy.media/ff_calendar_nextweek.json"
-    data = _ff_fetch_requests(url2)
-    if data:
-        print("[FF] nextweek requests OK: " + str(len(data)) + " events")
-        return _parse_ff_events(data)
+    # 5. aiohttp proxy
+    d = await fetch_json(FF_PROXY)
+    if d and isinstance(d, list) and len(d) > 0:
+        print("[FF] aiohttp proxy OK: " + str(len(d)))
+        return _parse_ff(d)
 
-    data = _ff_fetch_urllib(url2)
-    if data:
-        print("[FF] nextweek urllib OK: " + str(len(data)) + " events")
-        return _parse_ff_events(data)
+    # 6. Next week via proxy
+    ff_next = "https://nfs.faireconomy.media/ff_calendar_nextweek.json"
+    d = _try_fetch("https://api.allorigins.win/raw?url=" + ff_next)
+    if d:
+        print("[FF] nextweek proxy OK: " + str(len(d)))
+        return _parse_ff(d)
 
-    print("[FF] ALL methods failed")
+    print("[FF] ALL FAILED")
     return []
 
 
@@ -304,112 +271,79 @@ async def call_groq(prompt, max_tokens=3000, timeout_sec=45):
                     return result["choices"][0]["message"]["content"].strip()
                 print("[GROQ] Error " + str(resp.status))
     except Exception as e:
-        print("[GROQ] Exception: " + str(e))
+        print("[GROQ] " + str(e))
     return None
 
 
-async def get_ai_analysis(btc, global_data, dxy, fear_greed, news):
+async def get_ai_analysis(btc, gd, dxy, fg, news):
     trend = "Bullish" if btc["change_24h"] > 0 else "Bearish"
-    fg = str(fear_greed["value"]) + " - " + fear_greed["label"]
-    news_titles = "\n".join("- " + n["title"] for n in news[:5])
+    fg_s = str(fg["value"]) + " - " + fg["label"]
+    nt = "\n".join("- " + n["title"] for n in news[:5])
+    dxy_s = str(dxy) if dxy else "N/A"
 
     prompt = (
-        "Kamu analis crypto profesional. Berikan analisis dalam Bahasa Indonesia. "
-        "JAWAB 3 BAGIAN INI SECARA TERPISAH, setiap bagian maks 800 karakter:\n\n"
-        "DATA:\n"
-        "- BTC: $" + f"{btc['price']:,.2f}" + " (" + f"{btc['change_24h']:+.2f}" + "%)\n"
-        "- Range: $" + f"{btc['high']:,.2f}" + " / $" + f"{btc['low']:,.2f}" + "\n"
-        "- Volume: $" + f"{btc['volume']:,.0f}" + "\n"
-        "- DXY: " + (str(dxy) if dxy else "N/A") + "\n"
-        "- Market Cap: $" + f"{global_data['market_cap']:,.0f}" + "\n"
-        "- Volume Global: $" + f"{global_data['volume']:,.0f}" + "\n"
-        "- BTC Dom: " + f"{global_data['btc_dom']:.1f}" + "% | ETH Dom: "
-        + f"{global_data['eth_dom']:.1f}" + "%\n"
-        "- Fear & Greed: " + fg + "\n"
-        "- Market 24h: " + f"{global_data['change_24h']:+.2f}" + "% | Trend: " + trend + "\n\n"
-        "BERITA:\n" + news_titles + "\n\n"
-        "FORMAT JAWABAN (wajib ikuti):\n\n"
-        "[1] RINGKASAN PASAR\n"
-        "(2-3 kalimat. Kondisi BTC, DXY, volume, sentimen)\n\n"
-        "[2] PSIKOLOGI PASAR\n"
-        "(2-3 kalimat. Fear & Greed, panic selling/FOMO, perilaku trader)\n\n"
-        "[3] PREDIKSI ARAH MARKET\n"
-        "(2-3 kalimat. Prediksi 24-48 jam, support/resistance, skenario bullish/bearish)\n\n"
-        "PENTING:\n"
-        "- Bahasa Indonesia profesional\n"
-        "- Emoji cukup 1 per bagian\n"
-        "- WAJIB tulis [1] [2] [3] sebagai separator\n"
-        "- Jangan pakai ** atau ##\n"
-        "- Setiap bagian maks 800 karakter"
+        "Kamu analis crypto profesional. Bahasa Indonesia. "
+        "JAWAB 3 BAGIAN, setiap bagian maks 800 karakter:\n\n"
+        "DATA: BTC $" + f"{btc['price']:,.2f}" + " (" + f"{btc['change_24h']:+.2f}" + "%) "
+        "Range $" + f"{btc['high']:,.2f}" + "/$" + f"{btc['low']:,.2f}" + " "
+        "Vol $" + f"{btc['volume']:,.0f}" + " DXY " + dxy_s + " "
+        "MCap $" + f"{gd['market_cap']:,.0f}" + " Vol $" + f"{gd['volume']:,.0f}" + " "
+        "BTC Dom " + f"{gd['btc_dom']:.1f}" + "% ETH Dom " + f"{gd['eth_dom']:.1f}" + "% "
+        "F&G " + fg_s + " Mkt " + f"{gd['change_24h']:+.2f}" + "% " + trend + "\n"
+        "BERITA:\n" + nt + "\n\n"
+        "[1] RINGKASAN PASAR (2-3 kalimat)\n"
+        "[2] PSIKOLOGI PASAR (2-3 kalimat)\n"
+        "[3] PREDIKSI ARAH MARKET (2-3 kalimat)\n\n"
+        "Emoji 1 per bagian. WAJIB tulis [1] [2] [3]. Jangan ** atau ##."
     )
 
-    result = await call_groq(prompt, max_tokens=2000, timeout_sec=45)
+    result = await call_groq(prompt, max_tokens=2000)
     if result:
         parts = {}
-        separators = [("[1]", "ringkasan"), ("[2]", "psikologi"), ("[3]", "prediksi")]
-        for idx_s, (label, key) in enumerate(separators):
-            idx = result.find(label)
+        seps = [("[1]", "ringkasan"), ("[2]", "psikologi"), ("[3]", "prediksi")]
+        for si, (lab, key) in enumerate(seps):
+            idx = result.find(lab)
             if idx != -1:
-                next_idx = len(result)
-                for next_label, _ in separators[idx_s + 1:]:
-                    ni = result.find(next_label, idx + 3)
+                nxt = len(result)
+                for nl, _ in seps[si + 1:]:
+                    ni = result.find(nl, idx + 3)
                     if ni != -1:
-                        next_idx = ni
+                        nxt = ni
                         break
-                text = result[idx + 3:next_idx].strip()
-                text = text.lstrip("0123456789.:- ").strip()
-                parts[key] = text[:1024]
+                txt = result[idx + 3:nxt].strip().lstrip("0123456789.:- ").strip()
+                parts[key] = txt[:1024]
         if len(parts) == 3:
             return parts
 
-    # Fallback
-    change_dir = btc["change_24h"]
-    dxy_str = str(dxy) if dxy else "N/A"
-    if dxy and dxy > 100:
-        dxy_status = "menguat menekan crypto"
+    cd = btc["change_24h"]
+    ds = "menguat menekan crypto" if (dxy and dxy > 100) else "melemah memberi ruang bagi crypto"
+    fv = fg["value"]
+    fl = fg["label"]
+    if fv < 25:
+        fd = "ekstrem takut"
+        fa = "Peluang akumulasi bagi long-term trader"
+    elif fv < 40:
+        fd = "takut"
+        fa = "Potensi rebound tapi tunggu konfirmasi"
+    elif fv < 60:
+        fd = "netral"
+        fa = "Kondisi sideways, tunggu konfirmasi arah"
+    elif fv < 75:
+        fd = "serakah"
+        fa = "Waspadai potensi profit taking"
     else:
-        dxy_status = "melemah memberi ruang bagi crypto"
+        fd = "ekstrem serakah"
+        fa = "Risiko koreksi tinggi, waspada"
+    pd = "potensi menguat" if cd > 0 else "potensi koreksi"
 
-    fear_val = fear_greed["value"]
-    fear_label = fear_greed["label"]
-    if fear_val < 25:
-        fear_desc = "ekstrem takut"
-        fear_advice = "Peluang akumulasi bagi long-term trader"
-    elif fear_val < 40:
-        fear_desc = "takut"
-        fear_advice = "Potensi rebound tapi tunggu konfirmasi"
-    elif fear_val < 60:
-        fear_desc = "netral"
-        fear_advice = "Kondisi sideways, tunggu konfirmasi arah"
-    elif fear_val < 75:
-        fear_desc = "serakah"
-        fear_advice = "Waspadai potensi profit taking"
-    else:
-        fear_desc = "ekstrem serakah"
-        fear_advice = "Risiko koreksi tinggi, waspada"
-
-    if change_dir > 0:
-        prediksi_dir = "potensi menguat"
-    else:
-        prediksi_dir = "potensi koreksi"
-
-    ringkasan = (
-        "BTC di $" + f"{btc['price']:,.2f}" + " (" + f"{change_dir:+.2f}" + "%), "
-        "market " + ("naik" if change_dir > 0 else "turun") + " "
-        + f"{global_data['change_24h']:+.2f}" + "%. BTC Dom "
-        + f"{global_data['btc_dom']:.1f}" + "%, DXY " + dxy_str + ". "
-        "DXY " + dxy_status + "."
-    )
-    psikologi = (
-        "Fear & Greed " + str(fear_val) + " (" + fear_label + "), sentimen "
-        + fear_desc + ". " + fear_advice + "."
-    )
-    prediksi = (
-        "BTC " + prediksi_dir + " dalam 24-48 jam. Support ~$"
-        + f"{btc['low']:,.0f}" + ", Resistance ~$" + f"{btc['high']:,.0f}" + ". "
-        "Perhatikan data ekonomi AS yang bisa picu volatilitas."
-    )
-    return {"ringkasan": ringkasan, "psikologi": psikologi, "prediksi": prediksi}
+    return {
+        "ringkasan": "BTC di $" + f"{btc['price']:,.2f}" + " (" + f"{cd:+.2f}" + "%), market "
+            + ("naik" if cd > 0 else "turun") + " " + f"{gd['change_24h']:+.2f}" + "%. "
+            "BTC Dom " + f"{gd['btc_dom']:.1f}" + "%, DXY " + dxy_s + ". DXY " + ds + ".",
+        "psikologi": "Fear & Greed " + str(fv) + " (" + fl + "), sentimen " + fd + ". " + fa + ".",
+        "prediksi": "BTC " + pd + " dalam 24-48 jam. Support ~$" + f"{btc['low']:,.0f}"
+            + ", Resistance ~$" + f"{btc['high']:,.0f}" + ". Perhatikan data ekonomi AS."
+    }
 
 
 async def get_macro_analysis(events):
@@ -417,92 +351,51 @@ async def get_macro_analysis(events):
         return None
     lines = []
     for e in events:
-        actual_str = e["actual"] if e["actual"] else "belum"
-        line = "- [" + e["impact"] + "] " + e["title"] + " | " + e["time_wib"]
-        line += " | F: " + e["forecast"] + " | P: " + e["previous"]
-        line += " | A: " + actual_str
-        lines.append(line)
-    event_list = "\n".join(lines)
-
-    prompt = (
-        "Analisis event ekonomi USD dalam Bahasa Indonesia. "
-        "Setiap event maks 600 karakter:\n\n" + event_list + "\n\n"
-        "Untuk SETIAP event:\n"
-        "EVENT: [nama]\nRESEARCH: (1-2 kalimat)\n"
-        "PROYEKSI: (1-2 kalimat)\nTERDAMPAK: (1-2 kalimat)\n\n"
-        "Indonesia profesional, emoji sedikit. Jangan ** atau ##. "
-        "Separator === antar event."
-    )
+        a = e["actual"] if e["actual"] else "belum"
+        lines.append("- [" + e["impact"] + "] " + e["title"] + " | " + e["time_wib"] + " | F: " + e["forecast"] + " | P: " + e["previous"] + " | A: " + a)
+    el = "\n".join(lines)
+    prompt = ("Analisis event ekonomi USD. Indonesia. Event maks 600 karakter:\n\n" + el + "\n\n"
+        "EVENT: [nama]\nRESEARCH: (1-2 kalimat)\nPROYEKSI: (1-2 kalimat)\nTERDAMPAK: (1-2 kalimat)\n\n"
+        "Emoji sedikit. Jangan ** atau ##. Separator === antar event.")
     return await call_groq(prompt, max_tokens=4000, timeout_sec=60)
 
 
 async def get_realtime_alert(event):
-    prompt = (
-        "Data ekonomi RILIS:\n" + event["title"]
-        + " | Forecast: " + event["forecast"]
-        + " | Previous: " + event["previous"]
-        + " | Actual: " + event["actual"]
-        + "\n\nAnalisis Bahasa Indonesia (maks 400 kata):\n"
-        "VERDICT: BEAT/MISS/IN-LINE\n"
-        "DAMPAK: Arti data, reaksi USD/DXY, implikasi Fed, dampak BTC/ETH\n"
-        "SARAN: Apa dilakukan trader 1-6 jam, level BTC, risiko\n\n"
-        "Emoji sedikit. Jangan ** atau ##"
-    )
-    result = await call_groq(prompt, max_tokens=800, timeout_sec=30)
-    if result:
-        return result
-    return (
-        "Data " + event["title"] + " rilis. Actual: " + event["actual"]
-        + " vs Forecast: " + event["forecast"]
-        + " vs Previous: " + event["previous"] + "."
-    )
+    prompt = ("Data RILIS: " + event["title"] + " | F: " + event["forecast"] + " | P: " + event["previous"] + " | A: " + event["actual"]
+        + "\n\nVERDICT: BEAT/MISS/IN-LINE\nDAMPAK: Arti data, USD/DXY, Fed, BTC/ETH\nSARAN: Trading 1-6 jam, level BTC, risiko\n\nEmoji sedikit. Jangan ** atau ##")
+    r = await call_groq(prompt, max_tokens=800, timeout_sec=30)
+    if r:
+        return r
+    return "Data " + event["title"] + " rilis. Actual: " + event["actual"] + " vs Forecast: " + event["forecast"] + "."
 
 
-def build_report_embeds(btc, global_data, dxy, fear_greed, news, ai):
-    embed = discord.Embed(
-        title="Laporan Pasar Crypto - " + datetime.now(wib).strftime("%d %B %Y"),
-        color=discord.Color.orange()
-    )
-    if btc["change_24h"] >= 0:
-        trend_icon = "📈"
-    else:
-        trend_icon = "📉"
-
-    data_pasar = (
+def build_report_embeds(btc, gd, dxy, fg, news, ai):
+    embed = discord.Embed(title="Laporan Pasar Crypto - " + datetime.now(wib).strftime("%d %B %Y"), color=discord.Color.orange())
+    ti = "📈" if btc["change_24h"] >= 0 else "📉"
+    embed.add_field(name=ti + " Data Pasar", value=(
         "BTC/USDT: $" + f"{btc['price']:,.2f}" + " (" + f"{btc['change_24h']:+.2f}" + "%)\n"
         "High/Low: $" + f"{btc['high']:,.2f}" + " / $" + f"{btc['low']:,.2f}" + "\n"
         "Volume 24h: $" + f"{btc['volume']:,.0f}" + "\n"
-        "DXY Index: " + (str(dxy) if dxy else "N/A")
-    )
-    embed.add_field(name=trend_icon + " Data Pasar", value=data_pasar, inline=False)
+        "DXY Index: " + (str(dxy) if dxy else "N/A")), inline=False)
 
-    fg = str(fear_greed["value"]) + " - " + fear_greed["label"]
-    if global_data["change_24h"] > 0:
-        market_icon = "🟢"
-        trend = "Bullish"
-    else:
-        market_icon = "🔴"
-        trend = "Bearish"
+    fs = str(fg["value"]) + " - " + fg["label"]
+    mi = "🟢" if gd["change_24h"] > 0 else "🔴"
+    tr = "Bullish" if gd["change_24h"] > 0 else "Bearish"
+    embed.add_field(name=mi + " Market Global", value=(
+        "Market Cap: $" + f"{gd['market_cap']:,.0f}" + "\n"
+        "Volume: $" + f"{gd['volume']:,.0f}" + "\n"
+        "BTC Dom: " + f"{gd['btc_dom']:.1f}" + "% | ETH Dom: " + f"{gd['eth_dom']:.1f}" + "%\n"
+        "Fear & Greed: " + fs + "\n"
+        "Market 24h: " + f"{gd['change_24h']:+.2f}" + "% | " + tr), inline=False)
 
-    market_global = (
-        "Market Cap: $" + f"{global_data['market_cap']:,.0f}" + "\n"
-        "Volume: $" + f"{global_data['volume']:,.0f}" + "\n"
-        "BTC Dom: " + f"{global_data['btc_dom']:.1f}" + "% | ETH Dom: "
-        + f"{global_data['eth_dom']:.1f}" + "%\n"
-        "Fear & Greed: " + fg + "\n"
-        "Market 24h: " + f"{global_data['change_24h']:+.2f}" + "% | " + trend
-    )
-    embed.add_field(name=market_icon + " Market Global", value=market_global, inline=False)
-
-    news_lines = []
+    nl = []
     for n in news[:5]:
-        title = n["title"]
-        url = n.get("url", "")
-        if url:
-            news_lines.append("[" + title + "](" + url + ")")
+        u = n.get("url", "")
+        if u:
+            nl.append("[" + n["title"] + "](" + u + ")")
         else:
-            news_lines.append(title)
-    embed.add_field(name="📰 Berita Terkini", value="\n".join(news_lines), inline=False)
+            nl.append(n["title"])
+    embed.add_field(name="📰 Berita Terkini", value="\n".join(nl), inline=False)
 
     if isinstance(ai, dict):
         embed.add_field(name="🤖 Ringkasan Pasar", value=ai.get("ringkasan", "N/A")[:1024], inline=False)
@@ -510,60 +403,35 @@ def build_report_embeds(btc, global_data, dxy, fear_greed, news, ai):
         embed.add_field(name="🎯 Prediksi Market", value=ai.get("prediksi", "N/A")[:1024], inline=False)
     else:
         chunks = split_text(ai, 1024) if ai else ["Gagal generate analisis"]
-        labels = ["🤖 Ringkasan Pasar", "🧠 Psikologi Pasar", "🎯 Prediksi Market"]
         for i, chunk in enumerate(chunks[:3]):
-            embed.add_field(name=labels[i], value=chunk[:1024], inline=False)
+            embed.add_field(name=["🤖 Ringkasan", "🧠 Psikologi", "🎯 Prediksi"][i], value=chunk[:1024], inline=False)
 
-    embed.set_footer(text="Not Financial Advice | DYOR | Groq AI | CryptoCompare | CoinGecko | Forex Factory")
+    embed.set_footer(text="Not Financial Advice | DYOR | Groq AI")
     return embed
 
 
 def build_macro_embed(events, ai_text):
-    embed = discord.Embed(
-        title="📅 Kalender Ekonomi USD - " + datetime.now(wib).strftime("%d %B %Y"),
-        description="Event USD berdampak HIGH & MEDIUM",
-        color=discord.Color.orange()
-    )
+    embed = discord.Embed(title="📅 Kalender Ekonomi USD - " + datetime.now(wib).strftime("%d %B %Y"),
+        description="Event USD berdampak HIGH & MEDIUM", color=discord.Color.orange())
     if not events:
-        embed.add_field(
-            name="⚠️ Info",
-            value="API Forex Factory tidak dapat diakses saat ini. Coba !macro lagi dalam beberapa saat.",
-            inline=False
-        )
+        embed.add_field(name="⚠️ Info", value="API gagal diakses. Coba !macro lagi.", inline=False)
         embed.set_footer(text="Forex Factory | Groq AI")
         return embed
-
     for e in events[:10]:
-        if e["impact"] == "HIGH":
-            icon = "🔴"
-        else:
-            icon = "🟡"
-        markers = ""
+        ic = "🔴" if e["impact"] == "HIGH" else "🟡"
+        mk = ""
         if e["is_today"]:
-            markers += " ⬅️ HARI INI"
+            mk += " ⬅️ HARI INI"
         if e["is_released"]:
-            markers += " ✅"
-        if e["is_released"]:
-            actual_line = "Actual: " + e["actual"]
-        else:
-            actual_line = "Belum Rilis"
-        value = (
-            "⏰ " + e["time_wib"] + "\n"
-            "F: " + e["forecast"] + " | P: " + e["previous"] + "\n" + actual_line
-        )
-        embed.add_field(name=icon + " " + e["title"] + markers, value=value, inline=False)
-
+            mk += " ✅"
+        al = "Actual: " + e["actual"] if e["is_released"] else "Belum Rilis"
+        embed.add_field(name=ic + " " + e["title"] + mk,
+            value="⏰ " + e["time_wib"] + "\nF: " + e["forecast"] + " | P: " + e["previous"] + "\n" + al, inline=False)
     if ai_text and len(ai_text) > 50:
-        chunks = split_text(ai_text, 1024)
-        for i, chunk in enumerate(chunks):
-            if i == 0:
-                label = "🔍 Analisis Dampak"
-            else:
-                label = "🔍 Analisis (lanjutan)"
-            embed.add_field(name=label, value=chunk, inline=False)
+        for i, chunk in enumerate(split_text(ai_text, 1024)):
+            embed.add_field(name="🔍 Analisis Dampak" if i == 0 else "🔍 (lanjutan)", value=chunk, inline=False)
     else:
-        embed.add_field(name="🔍 Analisis Dampak", value="AI sedang memproses. Coba lagi.", inline=False)
-
+        embed.add_field(name="🔍 Analisis Dampak", value="AI memproses. Coba lagi.", inline=False)
     embed.set_footer(text="Forex Factory | Groq AI")
     return embed
 
@@ -572,38 +440,22 @@ def build_realtime_embed(event, ai_text):
     verdict = "IN-LINE"
     vi = "⚪"
     try:
-        f_val = event["forecast"]
-        a_val = event["actual"]
-        forecast_f = float(f_val) if f_val not in ("N/A", "", "None", None) else None
-        actual_f = float(a_val) if a_val not in ("N/A", "", "None", None) else None
-        if forecast_f is not None and actual_f is not None:
-            diff = abs(actual_f - forecast_f)
-            threshold = abs(forecast_f) * 0.05 if forecast_f != 0 else 0.5
-            if diff > threshold:
-                if actual_f > forecast_f:
-                    verdict = "BEAT"
-                    vi = "🟢"
-                else:
-                    verdict = "MISS"
-                    vi = "🔴"
+        ff = float(event["forecast"]) if event["forecast"] not in ("N/A", "", "None", None) else None
+        af = float(event["actual"]) if event["actual"] not in ("N/A", "", "None", None) else None
+        if ff is not None and af is not None:
+            diff = abs(af - ff)
+            thr = abs(ff) * 0.05 if ff != 0 else 0.5
+            if diff > thr:
+                verdict = "BEAT" if af > ff else "MISS"
+                vi = "🟢" if af > ff else "🔴"
     except:
         pass
-
     embed = discord.Embed(title="⚡ DATA RILIS - " + event["title"], color=discord.Color.orange())
-    detail = (
-        "⏰ " + event["time_wib"] + "\n"
-        "F: " + event["forecast"] + " | P: " + event["previous"]
-        + " | A: " + event["actual"]
-    )
-    embed.add_field(name="Detail " + vi + " " + verdict, value=detail, inline=False)
+    embed.add_field(name="Detail " + vi + " " + verdict,
+        value="⏰ " + event["time_wib"] + "\nF: " + event["forecast"] + " | P: " + event["previous"] + " | A: " + event["actual"], inline=False)
     if ai_text:
-        chunks = split_text(ai_text, 1024)
-        for i, c in enumerate(chunks):
-            if i == 0:
-                label = "📝 Dampak & Saran"
-            else:
-                label = "📝 (lanjutan)"
-            embed.add_field(name=label, value=c, inline=False)
+        for i, c in enumerate(split_text(ai_text, 1024)):
+            embed.add_field(name="📝 Dampak & Saran" if i == 0 else "📝 (lanjutan)", value=c, inline=False)
     embed.set_footer(text="Realtime | Forex Factory | Groq AI")
     return embed
 
@@ -615,11 +467,9 @@ async def report(ctx):
     async with asyncio.Lock():
         loading = await ctx.send("⏳ Mengumpulkan data...")
         try:
-            btc, global_data, dxy, fear_greed, news = await asyncio.gather(
-                get_btc_data(), get_global_data(), get_dxy_data(), get_fear_greed(), get_news()
-            )
-            ai = await get_ai_analysis(btc, global_data, dxy, fear_greed, news)
-            embed = build_report_embeds(btc, global_data, dxy, fear_greed, news, ai)
+            btc, gd, dxy, fg, news = await asyncio.gather(get_btc_data(), get_global_data(), get_dxy_data(), get_fear_greed(), get_news())
+            ai = await get_ai_analysis(btc, gd, dxy, fg, news)
+            embed = build_report_embeds(btc, gd, dxy, fg, news, ai)
             try:
                 await loading.delete()
             except:
@@ -628,10 +478,6 @@ async def report(ctx):
         except Exception as e:
             try:
                 await loading.delete()
-            except:
-                pass
-            try:
-                await ctx.send("❌ Error: " + str(e))
             except:
                 pass
 
@@ -656,10 +502,6 @@ async def macro(ctx):
                 await loading.delete()
             except:
                 pass
-            try:
-                await ctx.send("❌ Error: " + str(e))
-            except:
-                pass
 
 
 async def auto_post():
@@ -668,47 +510,38 @@ async def auto_post():
         target = now.replace(hour=REPORT_HOUR, minute=0, second=0, microsecond=0)
         if now >= target:
             target += timedelta(days=1)
-        wait_secs = (target - now).total_seconds()
-        print("[AUTO] Next post in " + str(round(wait_secs / 3600, 1)) + " hours")
-        await asyncio.sleep(wait_secs)
-        channel = bot.get_channel(CHANNEL_ID)
-        if not channel:
+        print("[AUTO] Next in " + str(round((target - now).total_seconds() / 3600, 1)) + "h")
+        await asyncio.sleep((target - now).total_seconds())
+        ch = bot.get_channel(CHANNEL_ID)
+        if not ch:
             continue
         try:
-            btc, global_data, dxy, fear_greed, news = await asyncio.gather(
-                get_btc_data(), get_global_data(), get_dxy_data(), get_fear_greed(), get_news()
-            )
-            ai = await get_ai_analysis(btc, global_data, dxy, fear_greed, news)
-            embed1 = build_report_embeds(btc, global_data, dxy, fear_greed, news, ai)
-            await channel.send(embed=embed1)
-            print("[AUTO] Report posted")
+            btc, gd, dxy, fg, news = await asyncio.gather(get_btc_data(), get_global_data(), get_dxy_data(), get_fear_greed(), get_news())
+            ai = await get_ai_analysis(btc, gd, dxy, fg, news)
+            await ch.send(embed=build_report_embeds(btc, gd, dxy, fg, news, ai))
             await asyncio.sleep(3)
             events = await get_ff_events()
-            macro_ai = await get_macro_analysis(events) if events else None
-            embed2 = build_macro_embed(events, macro_ai)
-            await channel.send(embed=embed2)
-            print("[AUTO] Macro posted")
+            mai = await get_macro_analysis(events) if events else None
+            await ch.send(embed=build_macro_embed(events, mai))
+            print("[AUTO] Done")
         except Exception as e:
-            print("[AUTO] Error: " + str(e))
+            print("[AUTO] " + str(e))
 
 
 async def realtime_monitor():
     await bot.wait_until_ready()
-    print("[RT] Realtime monitor started")
     while True:
         try:
             events = await get_ff_events()
             for e in events:
                 if e["is_released"] and e["title"] not in last_alerted:
                     last_alerted.add(e["title"])
-                    channel = bot.get_channel(CHANNEL_ID)
-                    if channel:
+                    ch = bot.get_channel(CHANNEL_ID)
+                    if ch:
                         ai_text = await get_realtime_alert(e)
-                        embed = build_realtime_embed(e, ai_text)
-                        await channel.send(embed=embed)
-                        print("[RT] " + e["title"])
-        except Exception as ex:
-            print("[RT] Error: " + str(ex))
+                        await ch.send(embed=build_realtime_embed(e, ai_text))
+        except:
+            pass
         await asyncio.sleep(120)
 
 
