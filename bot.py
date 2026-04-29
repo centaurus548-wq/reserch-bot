@@ -7,7 +7,6 @@ import json
 from datetime import datetime, timedelta
 import pytz
 
-# --- CONFIG ---
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -25,7 +24,7 @@ HARI = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 BULAN = ["Januari", "Februari", "Maret", "April", "Mei", "Juni",
          "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
 
-# --- HELPERS ---
+
 async def fetch_json(url, retries=3):
     for i in range(retries):
         try:
@@ -39,9 +38,11 @@ async def fetch_json(url, retries=3):
             await asyncio.sleep(2)
     return None
 
+
 def format_wib_time(date_str):
     try:
-        if not date_str: return "N/A"
+        if not date_str:
+            return "N/A"
         dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
         dt_wib = dt.astimezone(wib)
         today_wib = datetime.now(wib).date()
@@ -58,13 +59,16 @@ def format_wib_time(date_str):
     except:
         return "N/A"
 
+
 def is_today(date_str):
     try:
-        if not date_str: return False
+        if not date_str:
+            return False
         dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
         return dt.astimezone(wib).date() == datetime.now(wib).date()
     except:
         return False
+
 
 def split_text(text, max_len=1024):
     if not text or len(text) <= max_len:
@@ -83,19 +87,30 @@ def split_text(text, max_len=1024):
         text = text[split_at:].strip()
     return chunks
 
-# --- DATA FETCHERS ---
+
 async def get_btc_data():
     data = await fetch_json("https://min-api.cryptocompare.com/data/pricemultifull?fsyms=BTC&tsyms=USDT")
     if data and "RAW" in data and "BTC" in data["RAW"] and "USDT" in data["RAW"]["BTC"]:
         d = data["RAW"]["BTC"]["USDT"]
-        return {"price": d.get("PRICE", 0), "change_24h": d.get("CHANGEPCT24HOUR", 0),
-                "high": d.get("HIGH24HOUR", 0), "low": d.get("LOW24HOUR", 0), "volume": d.get("TOTALVOLUME24HTO", 0)}
+        return {
+            "price": d.get("PRICE", 0),
+            "change_24h": d.get("CHANGEPCT24HOUR", 0),
+            "high": d.get("HIGH24HOUR", 0),
+            "low": d.get("LOW24HOUR", 0),
+            "volume": d.get("TOTALVOLUME24HTO", 0)
+        }
     data = await fetch_json("https://api.coincap.io/v2/assets/bitcoin")
     if data and "data" in data:
         d = data["data"]
-        return {"price": float(d.get("priceUsd", 0)), "change_24h": float(d.get("changePercent24Hr", 0)),
-                "high": 0, "low": 0, "volume": float(d.get("volumeUsd24Hr", 0))}
+        return {
+            "price": float(d.get("priceUsd", 0)),
+            "change_24h": float(d.get("changePercent24Hr", 0)),
+            "high": 0,
+            "low": 0,
+            "volume": float(d.get("volumeUsd24Hr", 0))
+        }
     return {"price": 0, "change_24h": 0, "high": 0, "low": 0, "volume": 0}
+
 
 async def get_global_data():
     data = await fetch_json("https://api.coingecko.com/api/v3/global")
@@ -104,25 +119,41 @@ async def get_global_data():
         btc_dom = d.get("market_cap_percentage", {}).get("btc", 0)
         eth_dom = d.get("market_cap_percentage", {}).get("eth", 0)
         if 30 <= btc_dom <= 80:
-            return {"market_cap": d.get("total_market_cap", {}).get("usd", 0),
-                    "volume": d.get("total_volume", {}).get("usd", 0),
-                    "btc_dom": btc_dom, "eth_dom": eth_dom,
-                    "change_24h": d.get("market_cap_change_percentage_24h_usd", 0)}
+            return {
+                "market_cap": d.get("total_market_cap", {}).get("usd", 0),
+                "volume": d.get("total_volume", {}).get("usd", 0),
+                "btc_dom": btc_dom,
+                "eth_dom": eth_dom,
+                "change_24h": d.get("market_cap_change_percentage_24h_usd", 0)
+            }
     data = await fetch_json("https://api.coincap.io/v2/global")
     if data and "data" in data:
         d = data["data"]
-        return {"market_cap": float(d.get("marketCap", 0)), "volume": float(d.get("volume", 0)),
-                "btc_dom": float(d.get("btcDominance", 0)), "eth_dom": 0, "change_24h": 0}
+        return {
+            "market_cap": float(d.get("marketCap", 0)),
+            "volume": float(d.get("volume", 0)),
+            "btc_dom": float(d.get("btcDominance", 0)),
+            "eth_dom": 0,
+            "change_24h": 0
+        }
     return {"market_cap": 0, "volume": 0, "btc_dom": 0, "eth_dom": 0, "change_24h": 0}
+
 
 async def get_dxy_data():
     data = await fetch_json("https://api.exchangerate-api.com/v4/latest/USD")
     if data and "rates" in data:
         r = data["rates"]
-        dxy = 50.14348112 * (r.get("EUR",1)**-0.576) * (r.get("JPY",1)**0.136) * (r.get("GBP",1)**-0.119) * (r.get("CAD",1)**0.091) * (r.get("SEK",1)**0.042) * (r.get("CHF",1)**0.036)
+        eur = r.get("EUR", 1)
+        gbp = r.get("GBP", 1)
+        jpy = r.get("JPY", 1)
+        cad = r.get("CAD", 1)
+        sek = r.get("SEK", 1)
+        chf = r.get("CHF", 1)
+        dxy = 50.14348112 * (eur ** -0.576) * (jpy ** 0.136) * (gbp ** -0.119) * (cad ** 0.091) * (sek ** 0.042) * (chf ** 0.036)
         if 90 <= dxy <= 120:
             return round(dxy, 2)
     return None
+
 
 async def get_fear_greed():
     data = await fetch_json("https://api.alternative.me/fng/?limit=1")
@@ -130,11 +161,10 @@ async def get_fear_greed():
         return {"value": int(data["data"][0]["value"]), "label": data["data"][0]["value_classification"]}
     return {"value": 0, "label": "N/A"}
 
+
 async def get_news():
-    """Returns list of dicts: {"title": str, "url": str}"""
     news = []
 
-    # 1. CryptoPanic (has real crypto news with URLs)
     try:
         data = await fetch_json("https://cryptopanic.com/api/free/v1/posts/?auth_token=demo&filter=rising&currencies=BTC,ETH&public=true")
         if data and "results" in data:
@@ -148,7 +178,6 @@ async def get_news():
     except:
         pass
 
-    # 2. CryptoCompare (has real crypto news with URLs)
     try:
         data = await fetch_json("https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories=BTC,ETH&excludeCategories=Sponsored")
         if data and "Data" in data:
@@ -162,17 +191,17 @@ async def get_news():
     except:
         pass
 
-    # 3. FF events fallback (no real URLs, use Forex Factory page)
     ff = await get_ff_events()
     if ff:
         for e in ff[:5]:
             news.append({
-                "title": f"[USD] {e['title']} (Forecast: {e.get('forecast','N/A')})",
+                "title": "[USD] " + e["title"] + " (Forecast: " + str(e.get("forecast", "N/A")) + ")",
                 "url": "https://www.forexfactory.com/calendar"
             })
         return news if news else [{"title": "Tidak ada berita tersedia", "url": ""}]
 
     return [{"title": "Tidak ada berita tersedia", "url": ""}]
+
 
 async def get_ff_events():
     data = await fetch_json("https://nfs.faireconomy.media/ff_calendar_thisweek.json")
@@ -180,12 +209,15 @@ async def get_ff_events():
         return []
     events = []
     for e in data:
-        if e.get("country") != "USD": continue
+        if e.get("country") != "USD":
+            continue
         impact = e.get("impact", "").lower()
-        if impact not in ("high", "medium"): continue
+        if impact not in ("high", "medium"):
+            continue
         date_raw = e.get("date", "")
         events.append({
-            "title": e.get("title", "Unknown"), "date_raw": date_raw,
+            "title": e.get("title", "Unknown"),
+            "date_raw": date_raw,
             "time_wib": format_wib_time(date_raw),
             "date_short": date_raw[:10] if date_raw else "N/A",
             "is_today": is_today(date_raw),
@@ -197,157 +229,222 @@ async def get_ff_events():
         })
     return events
 
-# --- AI ANALYSIS ---
+
 async def call_groq(prompt, max_tokens=3000, timeout_sec=45):
     try:
         timeout = aiohttp.ClientTimeout(total=timeout_sec)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
                 "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+                headers={"Authorization": "Bearer " + GROQ_API_KEY, "Content-Type": "application/json"},
                 json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "max_tokens": max_tokens, "temperature": 0.7}
             ) as resp:
                 if resp.status == 200:
                     result = await resp.json()
                     return result["choices"][0]["message"]["content"].strip()
-                print(f"[GROQ] Error {resp.status}")
+                print("[GROQ] Error " + str(resp.status))
     except Exception as e:
-        print(f"[GROQ] Exception: {e}")
+        print("[GROQ] Exception: " + str(e))
     return None
+
 
 async def get_ai_analysis(btc, global_data, dxy, fear_greed, news):
     trend = "Bullish" if btc["change_24h"] > 0 else "Bearish"
-    fg = f"{fear_greed['value']} - {fear_greed['label']}"
-    news_titles = "\n".join(f"- {n['title']}" for n in news[:5])
+    fg = str(fear_greed["value"]) + " - " + fear_greed["label"]
+    news_titles = "\n".join("- " + n["title"] for n in news[:5])
 
-    prompt = f"""Kamu analis crypto profesional. Berikan analisis dalam Bahasa Indonesia. JAWAB 3 BAGIAN INI SECARA TERPISAH, setiap bagian maks 800 karakter:
-
-DATA:
-- BTC: ${btc['price']:,.2f} ({btc['change_24h']:+.2f}%)
-- Range: ${btc['high']:,.2f} / ${btc['low']:,.2f}
-- Volume: ${btc['volume']:,.0f}
-- DXY: {dxy if dxy else 'N/A'}
-- Market Cap: ${global_data['market_cap']:,.0f}
-- Volume Global: ${global_data['volume']:,.0f}
-- BTC Dom: {global_data['btc_dom']:.1f}% | ETH Dom: {global_data['eth_dom']:.1f}%
-- Fear & Greed: {fg}
-- Market 24h: {global_data['change_24h']:+.2f}% | Trend: {trend}
-
-BERITA:
-{news_titles}
-
-FORMAT JAWABAN (wajib ikuti):
-
-[1] RINGKASAN PASAR
-(2-3 kalimat. Kondisi BTC, DXY, volume, sentimen keseluruhan)
-
-[2] PSIKOLOGI PASAR
-(2-3 kalimat. Fear & Greed, panic selling/FOMO, perilaku trader)
-
-[3] PREDIKSI ARAH MARKET
-(2-3 kalimat. Prediksi 24-48 jam, support/resistance, skenario bullish/bearish)
-
-PENTING:
-- Bahasa Indonesia profesional
-- Emoji cukup 1 per bagian
-- WAJIB tulis [1] [2] [3] sebagai separator
-- Jangan pakai ** atau ##
-- Setiap bagian maks 800 karakter"""
+    prompt = (
+        "Kamu analis crypto profesional. Berikan analisis dalam Bahasa Indonesia. "
+        "JAWAB 3 BAGIAN INI SECARA TERPISAH, setiap bagian maks 800 karakter:\n\n"
+        "DATA:\n"
+        "- BTC: $" + f"{btc['price']:,.2f}" + " (" + f"{btc['change_24h']:+.2f}" + "%)\n"
+        "- Range: $" + f"{btc['high']:,.2f}" + " / $" + f"{btc['low']:,.2f}" + "\n"
+        "- Volume: $" + f"{btc['volume']:,.0f}" + "\n"
+        "- DXY: " + (str(dxy) if dxy else "N/A") + "\n"
+        "- Market Cap: $" + f"{global_data['market_cap']:,.0f}" + "\n"
+        "- Volume Global: $" + f"{global_data['volume']:,.0f}" + "\n"
+        "- BTC Dom: " + f"{global_data['btc_dom']:.1f}" + "% | ETH Dom: " + f"{global_data['eth_dom']:.1f}" + "%\n"
+        "- Fear & Greed: " + fg + "\n"
+        "- Market 24h: " + f"{global_data['change_24h']:+.2f}" + "% | Trend: " + trend + "\n\n"
+        "BERITA:\n" + news_titles + "\n\n"
+        "FORMAT JAWABAN (wajib ikuti):\n\n"
+        "[1] RINGKASAN PASAR\n"
+        "(2-3 kalimat. Kondisi BTC, DXY, volume, sentimen)\n\n"
+        "[2] PSIKOLOGI PASAR\n"
+        "(2-3 kalimat. Fear & Greed, panic selling/FOMO, perilaku trader)\n\n"
+        "[3] PREDIKSI ARAH MARKET\n"
+        "(2-3 kalimat. Prediksi 24-48 jam, support/resistance, skenario bullish/bearish)\n\n"
+        "PENTING:\n"
+        "- Bahasa Indonesia profesional\n"
+        "- Emoji cukup 1 per bagian\n"
+        "- WAJIB tulis [1] [2] [3] sebagai separator\n"
+        "- Jangan pakai ** atau ##\n"
+        "- Setiap bagian maks 800 karakter"
+    )
 
     result = await call_groq(prompt, max_tokens=2000, timeout_sec=45)
     if result:
         parts = {}
-        for label, key in [("[1]", "ringkasan"), ("[2]", "psikologi"), ("[3]", "prediksi")]:
+        separators = [("[1]", "ringkasan"), ("[2]", "psikologi"), ("[3]", "prediksi")]
+        for idx_s, (label, key) in enumerate(separators):
             idx = result.find(label)
             if idx != -1:
-                next_label = None
-                for nl in ["[2]", "[3]"]:
-                    ni = result.find(nl, idx + 3)
+                next_idx = len(result)
+                for next_label, _ in separators[idx_s + 1:]:
+                    ni = result.find(next_label, idx + 3)
                     if ni != -1:
-                        next_label = ni
+                        next_idx = ni
                         break
-                text = result[idx+3:next_label].strip() if next_label else result[idx+3:].strip()
+                text = result[idx + 3:next_idx].strip()
                 text = text.lstrip("0123456789.:- ").strip()
                 parts[key] = text[:1024]
         if len(parts) == 3:
             return parts
 
-    trend_dir = "naik" if btc["change_24h"] > 0 else "turun"
+    change_dir = btc["change_24h"]
+    dxy_status = "menguat menekan crypto" if (dxy and dxy > 100) else "melemah memberi ruang bagi crypto"
+    fear_val = fear_greed["value"]
+    fear_label = fear_greed["label"]
+
+    if fear_val < 25:
+        fear_desc = "ekstrem takut"
+        fear_advice = "Peluang akumulasi bagi long-term trader"
+    elif fear_val < 40:
+        fear_desc = "takut"
+        fear_advice = "Potensi rebound tapi tunggu konfirmasi"
+    elif fear_val < 60:
+        fear_desc = "netral"
+        fear_advice = "Kondisi sideways, tunggu konfirmasi arah"
+    elif fear_val < 75:
+        fear_desc = "serakah"
+        fear_advice = "Waspadai potensi profit taking"
+    else:
+        fear_desc = "ekstrem serakah"
+        fear_advice = "Risiko koreksi tinggi, waspada"
+
+    if change_dir > 0:
+        prediksi_dir = "potensi menguat"
+    else:
+        prediksi_dir = "potensi koreksi"
+
+    ringkasan = (
+        "BTC di $" + f"{btc['price']:,.2f}" + " (" + f"{change_dir:+.2f}" + "%), "
+        "market " + ("naik" if change_dir > 0 else "turun") + " " + f"{global_data['change_24h']:+.2f}" + "%. "
+        "BTC Dom " + f"{global_data['btc_dom']:.1f}" + "%, DXY " + (str(dxy) if dxy else "N/A") + ". "
+        "DXY " + dxy_status + "."
+    )
+
+    psikologi = (
+        "Fear & Greed " + str(fear_val) + " (" + fear_label + "), sentimen " + fear_desc + ". "
+        + fear_advice + "."
+    )
+
+    prediksi = (
+        "BTC " + prediksi_dir + " dalam 24-48 jam. "
+        "Support ~$" + f"{btc['low']:,.0f}" + ", Resistance ~$" + f"{btc['high']:,.0f}" + ". "
+        "Perhatikan data ekonomi AS yang bisa picu volatilitas."
+    )
+
     return {
-        "ringkasan": f"📊 BTC di ${btc['price']:,.2f} ({btc['change_24h']:+.2f}%), market {trend_dir} {global_data['change_24h']:+.2f}%. BTC Dom {global_data['btc_dom']:.1f}%, DXY {dxy if dxy else 'N/A'}. {'DXY menguat menekan crypto' if dxy and dxy > 100 else 'DXY melemah memberi ruang bagi crypto'}.",
-        "psikologi": f"🧠 Fear & Greed {fear_greed['value']} ({fear_greed['label']}), sentimen {'ekstrem takut' if fear_greed['value'] < 25 else 'takut' if fear_greed['value'] < 40 else 'netral' if fear_greed['value'] < 60 else 'serakah'}. {'Peluang akumulasi bagi long-term trader' if fear_greed['value'] < 30 else 'Waspadai potensi koreksi' if fear_greed['value'] > 70 else 'Kondisi sideways, tunggu konfirmasi arah'}.",
-        "prediksi": f"🎯 BTC {'potensi menguat' if btc['change_24h"] > 0 else 'potensi koreksi'} dalam 24-48 jam. Support ~${btc['low']:,.0f}, Resistance ~${btc['high']:,.0f}. Perhatikan data ekonomi AS yang bisa picu volatilitas."
+        "ringkasan": ringkasan,
+        "psikologi": psikologi,
+        "prediksi": prediksi
     }
 
+
 async def get_macro_analysis(events):
-    if not events: return None
-    event_list = "\n".join(
-        f"- [{e['impact']}] {e['title']} | {e['time_wib']} | F: {e['forecast']} | P: {e['previous']} | A: {e['actual'] if e['actual'] else 'belum'}"
-        for e in events
+    if not events:
+        return None
+
+    lines = []
+    for e in events:
+        actual_str = e["actual"] if e["actual"] else "belum"
+        line = "- [" + e["impact"] + "] " + e["title"] + " | " + e["time_wib"] + " | F: " + e["forecast"] + " | P: " + e["previous"] + " | A: " + actual_str
+        lines.append(line)
+    event_list = "\n".join(lines)
+
+    prompt = (
+        "Analisis event ekonomi USD dalam Bahasa Indonesia. Setiap event maks 600 karakter:\n\n"
+        + event_list + "\n\n"
+        "Untuk SETIAP event:\n"
+        "EVENT: [nama]\n"
+        "RESEARCH: (1-2 kalimat)\n"
+        "PROYEKSI: (1-2 kalimat)\n"
+        "TERDAMPAK: (1-2 kalimat)\n\n"
+        "Indonesia profesional, emoji sedikit. Jangan ** atau ##. Separator === antar event."
     )
-    prompt = f"""Analisis event ekonomi USD dalam Bahasa Indonesia. Setiap event maks 600 karakter:
 
-{event_list}
-
-Untuk SETIAP event:
-EVENT: [nama]
-RESEARCH: (1-2 kalimat)
-PROYEKSI: (1-2 kalimat)
-TERDAMPAK: (1-2 kalimat)
-
-Indonesia profesional, emoji sedikit. Jangan ** atau ##. Separator === antar event."""
     return await call_groq(prompt, max_tokens=4000, timeout_sec=60)
 
+
 async def get_realtime_alert(event):
-    prompt = f"""Data ekonomi RILIS:
-{event['title']} | Forecast: {event['forecast']} | Previous: {event['previous']} | Actual: {event['actual']}
+    prompt = (
+        "Data ekonomi RILIS:\n"
+        + event["title"] + " | Forecast: " + event["forecast"]
+        + " | Previous: " + event["previous"] + " | Actual: " + event["actual"] + "\n\n"
+        "Analisis Bahasa Indonesia (maks 400 kata):\n"
+        "VERDICT: BEAT/MISS/IN-LINE\n"
+        "DAMPAK: Arti data, reaksi USD/DXY, implikasi Fed, dampak BTC/ETH\n"
+        "SARAN: Apa dilakukan trader 1-6 jam, level BTC, risiko\n\n"
+        "Emoji sedikit. Jangan ** atau ##"
+    )
 
-Analisis Bahasa Indonesia (maks 400 kata):
-VERDICT: BEAT/MISS/IN-LINE
-DAMPAK: Arti data, reaksi USD/DXY, implikasi Fed, dampak BTC/ETH
-SARAN: Apa dilakukan trader 1-6 jam, level BTC, risiko
+    result = await call_groq(prompt, max_tokens=800, timeout_sec=30)
+    if result:
+        return result
+    return (
+        "Data " + event["title"] + " rilis. "
+        "Actual: " + event["actual"] + " vs Forecast: " + event["forecast"]
+        + " vs Previous: " + event["previous"] + "."
+    )
 
-Emoji sedikit. Jangan ** atau ##"""
-    return await call_groq(prompt, max_tokens=800, timeout_sec=30)
 
-# --- EMBED BUILDERS ---
 def build_report_embeds(btc, global_data, dxy, fear_greed, news, ai):
     embed = discord.Embed(
-        title=f"Laporan Pasar Crypto - {datetime.now(wib).strftime('%d %B %Y')}",
+        title="Laporan Pasar Crypto - " + datetime.now(wib).strftime("%d %B %Y"),
         color=discord.Color.orange()
     )
 
-    trend_e = "📈" if btc["change_24h"] >= 0 else "📉"
-    embed.add_field(name=f"{trend_e} Data Pasar", value=(
-        f"BTC/USDT: ${btc['price']:,.2f} ({btc['change_24h']:+.2f}%)\n"
-        f"High/Low: ${btc['high']:,.2f} / ${btc['low']:,.2f}\n"
-        f"Volume 24h: ${btc['volume']:,.0f}\n"
-        f"DXY Index: {dxy if dxy else 'N/A'}"
-    ), inline=False)
+    if btc["change_24h"] >= 0:
+        trend_icon = "📈"
+    else:
+        trend_icon = "📉"
 
-    fg = f"{fear_greed['value']} - {fear_greed['label']}"
-    trend = "Bullish" if global_data["change_24h"] > 0 else "Bearish"
-    embed.add_field(name=f"{'🟢' if global_data['change_24h'] > 0 else '🔴'} Market Global", value=(
-        f"Market Cap: ${global_data['market_cap']:,.0f}\n"
-        f"Volume: ${global_data['volume']:,.0f}\n"
-        f"BTC Dom: {global_data['btc_dom']:.1f}% | ETH Dom: {global_data['eth_dom']:.1f}%\n"
-        f"Fear & Greed: {fg}\n"
-        f"Market 24h: {global_data['change_24h']:+.2f}% | {trend}"
-    ), inline=False)
+    data_pasar = (
+        "BTC/USDT: $" + f"{btc['price']:,.2f}" + " (" + f"{btc['change_24h']:+.2f}" + "%)\n"
+        "High/Low: $" + f"{btc['high']:,.2f}" + " / $" + f"{btc['low']:,.2f}" + "\n"
+        "Volume 24h: $" + f"{btc['volume']:,.0f}" + "\n"
+        "DXY Index: " + (str(dxy) if dxy else "N/A")
+    )
+    embed.add_field(name=trend_icon + " Data Pasar", value=data_pasar, inline=False)
 
-    # Berita dengan LINK
+    fg = str(fear_greed["value"]) + " - " + fear_greed["label"]
+    if global_data["change_24h"] > 0:
+        market_icon = "🟢"
+        trend = "Bullish"
+    else:
+        market_icon = "🔴"
+        trend = "Bearish"
+
+    market_global = (
+        "Market Cap: $" + f"{global_data['market_cap']:,.0f}" + "\n"
+        "Volume: $" + f"{global_data['volume']:,.0f}" + "\n"
+        "BTC Dom: " + f"{global_data['btc_dom']:.1f}" + "% | ETH Dom: " + f"{global_data['eth_dom']:.1f}" + "%\n"
+        "Fear & Greed: " + fg + "\n"
+        "Market 24h: " + f"{global_data['change_24h']:+.2f}" + "% | " + trend
+    )
+    embed.add_field(name=market_icon + " Market Global", value=market_global, inline=False)
+
     news_lines = []
     for n in news[:5]:
         title = n["title"]
         url = n.get("url", "")
         if url:
-            # Discord embed: [text](url) = clickable link
-            news_lines.append(f"• [{title}]({url})")
+            news_lines.append("[" + title + "](" + url + ")")
         else:
-            news_lines.append(f"• {title}")
+            news_lines.append(title)
     embed.add_field(name="📰 Berita Terkini", value="\n".join(news_lines), inline=False)
 
-    # AI Analysis - 3 field terpisah
     if isinstance(ai, dict):
         embed.add_field(name="🤖 Ringkasan Pasar", value=ai.get("ringkasan", "N/A")[:1024], inline=False)
         embed.add_field(name="🧠 Psikologi Pasar", value=ai.get("psikologi", "N/A")[:1024], inline=False)
@@ -361,32 +458,50 @@ def build_report_embeds(btc, global_data, dxy, fear_greed, news, ai):
     embed.set_footer(text="Not Financial Advice | DYOR | Groq AI | CryptoCompare | CoinGecko | Forex Factory")
     return embed
 
+
 def build_macro_embed(events, ai_text):
     embed = discord.Embed(
-        title=f"📅 Kalender Ekonomi USD - {datetime.now(wib).strftime('%d %B %Y')}",
+        title="📅 Kalender Ekonomi USD - " + datetime.now(wib).strftime("%d %B %Y"),
         description="Event USD berdampak HIGH & MEDIUM",
         color=discord.Color.orange()
     )
+
     if not events:
         embed.add_field(name="⚠️ Info", value="API Forex Factory tidak dapat diakses. Coba !macro lagi.", inline=False)
         embed.set_footer(text="Forex Factory | Groq AI")
         return embed
 
     for e in events[:10]:
-        icon = "🔴" if e["impact"] == "HIGH" else "🟡"
+        if e["impact"] == "HIGH":
+            icon = "🔴"
+        else:
+            icon = "🟡"
+
         markers = ""
-        if e["is_today"]: markers += " ⬅️ HARI INI"
-        if e["is_released"]: markers += " ✅"
-        actual_line = f"Actual: {e['actual']}" if e["is_released"] else "Belum Rilis"
-        embed.add_field(name=f"{icon} {e['title']}{markers}", value=(
-            f"⏰ {e['time_wib']}\n"
-            f"F: {e['forecast']} | P: {e['previous']}\n{actual_line}"
-        ), inline=False)
+        if e["is_today"]:
+            markers += " ⬅️ HARI INI"
+        if e["is_released"]:
+            markers += " ✅"
+
+        if e["is_released"]:
+            actual_line = "Actual: " + e["actual"]
+        else:
+            actual_line = "Belum Rilis"
+
+        value = (
+            "⏰ " + e["time_wib"] + "\n"
+            "F: " + e["forecast"] + " | P: " + e["previous"] + "\n"
+            + actual_line
+        )
+        embed.add_field(name=icon + " " + e["title"] + markers, value=value, inline=False)
 
     if ai_text and len(ai_text) > 50:
         chunks = split_text(ai_text, 1024)
         for i, chunk in enumerate(chunks):
-            label = "🔍 Analisis Dampak" if i == 0 else "🔍 Analisis (lanjutan)"
+            if i == 0:
+                label = "🔍 Analisis Dampak"
+            else:
+                label = "🔍 Analisis (lanjutan)"
             embed.add_field(name=label, value=chunk, inline=False)
     else:
         embed.add_field(name="🔍 Analisis Dampak", value="AI sedang memproses. Coba lagi.", inline=False)
@@ -394,32 +509,48 @@ def build_macro_embed(events, ai_text):
     embed.set_footer(text="Forex Factory | Groq AI")
     return embed
 
-def build_realtime_embed(event, ai_text):
-    verdict, vi = "IN-LINE", "⚪"
-    try:
-        f = float(event["forecast"]) if event["forecast"] not in ("N/A","","None",None) else None
-        a = float(event["actual"]) if event["actual"] not in ("N/A","","None",None) else None
-        if f is not None and a is not None:
-            diff = abs(a - f)
-            thr = abs(f) * 0.05 if f != 0 else 0.5
-            if diff > thr:
-                verdict = "BEAT" if a > f else "MISS"
-                vi = "🟢" if a > f else "🔴"
-    except: pass
 
-    embed = discord.Embed(title=f"⚡ DATA RILIS - {event['title']}", color=discord.Color.orange())
-    embed.add_field(name=f"Detail {vi} {verdict}", value=(
-        f"⏰ {event['time_wib']}\nF: {event['forecast']} | P: {event['previous']} | A: {event['actual']}"
-    ), inline=False)
+def build_realtime_embed(event, ai_text):
+    verdict = "IN-LINE"
+    vi = "⚪"
+    try:
+        f_val = event["forecast"]
+        a_val = event["actual"]
+        forecast_f = float(f_val) if f_val not in ("N/A", "", "None", None) else None
+        actual_f = float(a_val) if a_val not in ("N/A", "", "None", None) else None
+        if forecast_f is not None and actual_f is not None:
+            diff = abs(actual_f - forecast_f)
+            threshold = abs(forecast_f) * 0.05 if forecast_f != 0 else 0.5
+            if diff > threshold:
+                if actual_f > forecast_f:
+                    verdict = "BEAT"
+                    vi = "🟢"
+                else:
+                    verdict = "MISS"
+                    vi = "🔴"
+    except:
+        pass
+
+    embed = discord.Embed(title="⚡ DATA RILIS - " + event["title"], color=discord.Color.orange())
+    detail = (
+        "⏰ " + event["time_wib"] + "\n"
+        "F: " + event["forecast"] + " | P: " + event["previous"] + " | A: " + event["actual"]
+    )
+    embed.add_field(name="Detail " + vi + " " + verdict, value=detail, inline=False)
+
     if ai_text:
         chunks = split_text(ai_text, 1024)
         for i, c in enumerate(chunks):
-            label = "📝 Dampak & Saran" if i == 0 else "📝 (lanjutan)"
+            if i == 0:
+                label = "📝 Dampak & Saran"
+            else:
+                label = "📝 (lanjutan)"
             embed.add_field(name=label, value=c, inline=False)
+
     embed.set_footer(text="Realtime | Forex Factory | Groq AI")
     return embed
 
-# --- COMMANDS ---
+
 @bot.command()
 async def report(ctx):
     if CHANNEL_ID and ctx.channel.id != CHANNEL_ID:
@@ -432,7 +563,6 @@ async def report(ctx):
             )
             ai = await get_ai_analysis(btc, global_data, dxy, fear_greed, news)
             embed = build_report_embeds(btc, global_data, dxy, fear_greed, news, ai)
-            # HAPUS loading message DULU, baru kirim embed
             try:
                 await loading.delete()
             except:
@@ -441,9 +571,13 @@ async def report(ctx):
         except Exception as e:
             try:
                 await loading.delete()
-                await ctx.send(f"❌ Error: {e}")
             except:
                 pass
+            try:
+                await ctx.send("❌ Error: " + str(e))
+            except:
+                pass
+
 
 @bot.command()
 async def macro(ctx):
@@ -463,11 +597,14 @@ async def macro(ctx):
         except Exception as e:
             try:
                 await loading.delete()
-                await ctx.send(f"❌ Error: {e}")
+            except:
+                pass
+            try:
+                await ctx.send("❌ Error: " + str(e))
             except:
                 pass
 
-# --- LOOPS ---
+
 async def auto_post():
     while True:
         now = datetime.now(wib)
@@ -475,11 +612,12 @@ async def auto_post():
         if now >= target:
             target += timedelta(days=1)
         wait_secs = (target - now).total_seconds()
-        print(f"[AUTO] Next post in {wait_secs/3600:.1f} hours")
+        print("[AUTO] Next post in " + str(round(wait_secs / 3600, 1)) + " hours")
         await asyncio.sleep(wait_secs)
 
         channel = bot.get_channel(CHANNEL_ID)
-        if not channel: continue
+        if not channel:
+            continue
 
         try:
             btc, global_data, dxy, fear_greed, news = await asyncio.gather(
@@ -497,10 +635,12 @@ async def auto_post():
             await channel.send(embed=embed2)
             print("[AUTO] Macro posted")
         except Exception as e:
-            print(f"[AUTO] Error: {e}")
+            print("[AUTO] Error: " + str(e))
+
 
 async def realtime_monitor():
     await bot.wait_until_ready()
+    print("[RT] Realtime monitor started")
     while True:
         try:
             events = await get_ff_events()
@@ -512,15 +652,17 @@ async def realtime_monitor():
                         ai_text = await get_realtime_alert(e)
                         embed = build_realtime_embed(e, ai_text)
                         await channel.send(embed=embed)
-                        print(f"[RT] {e['title']}")
+                        print("[RT] " + e["title"])
         except Exception as ex:
-            print(f"[RT] Error: {ex}")
+            print("[RT] Error: " + str(ex))
         await asyncio.sleep(120)
+
 
 @bot.event
 async def on_ready():
-    print(f"Bot online: {bot.user}")
+    print("Bot online: " + str(bot.user))
     bot.loop.create_task(auto_post())
     bot.loop.create_task(realtime_monitor())
+
 
 bot.run(DISCORD_TOKEN)
