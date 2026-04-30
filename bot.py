@@ -83,27 +83,32 @@ def _cmc_fetch(url):
     return None
 
 
-def _groq_chat(prompt, max_tokens=1500):
-    """Synchronous Groq AI chat completion."""
-    try:
-        r = req_lib.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": "Bearer " + GROQ_API_KEY,
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "llama-3.3-70b-versatile",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": max_tokens,
-                "temperature": 0.7,
-            },
-            timeout=30,
-        )
-        if r.status_code == 200:
-            return r.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        print("[Groq Error] " + str(e))
+def _groq_chat(prompt, max_tokens=1500, retries=2):
+    """Synchronous Groq AI chat completion with retry."""
+    for attempt in range(retries + 1):
+        try:
+            r = req_lib.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": "Bearer " + GROQ_API_KEY,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "llama-3.3-70b-versatile",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": max_tokens,
+                    "temperature": 0.7,
+                },
+                timeout=30,
+            )
+            if r.status_code == 200:
+                return r.json()["choices"][0]["message"]["content"]
+            else:
+                print("[Groq Error] HTTP " + str(r.status_code) + " | " + r.text[:200])
+        except Exception as e:
+            print("[Groq Error] Attempt " + str(attempt + 1) + "/" + str(retries + 1) + ": " + str(e))
+        if attempt < retries:
+            time.sleep(3)
     return None
 
 
@@ -1073,17 +1078,20 @@ def build_macro_embed(events, ai_text, imf_data=None):
             data_line += " | Actual: " + actual_s
         event_text += data_line + "\n\n"
 
-    if len(event_text) > 4000:
-        chunks = split_text(event_text, 4000)
-        emb_ff.add_field(name="Event Ekonomi", value=chunks[0], inline=False)
-        embeds.append(emb_ff)
-        for chunk in chunks[1:]:
-            extra = discord.Embed(title="Kalender Ekonomi (lanjutan)", color=ORANGE)
-            extra.add_field(name="Event Ekonomi", value=chunk, inline=False)
-            embeds.append(extra)
-    else:
-        emb_ff.add_field(name="Event Ekonomi", value=event_text, inline=False)
-        embeds.append(emb_ff)
+    # Split event_text into chunks of 1024 (Discord field value max)
+    chunks = split_text(event_text, 1024)
+    current_embed = emb_ff
+
+    for ci, chunk in enumerate(chunks):
+        if ci == 0:
+            field_name = "Event Ekonomi"
+        else:
+            embeds.append(current_embed)
+            field_name = "Event Ekonomi (lanjutan " + str(ci + 1) + ")"
+            current_embed = discord.Embed(title="Kalender Ekonomi (lanjutan)", color=ORANGE)
+        current_embed.add_field(name=field_name, value=chunk, inline=False)
+
+    embeds.append(current_embed)
 
     # ========== EMBED: AI Macro Analysis ==========
     if ai_text:
@@ -1224,6 +1232,7 @@ async def cmd_macro(ctx):
             loop = asyncio.get_event_loop()
 
             events = await loop.run_in_executor(None, get_ff_events, True)
+
             imf_cpi = await loop.run_in_executor(None, get_imf_cpi)
 
             ai_text = ""
@@ -1382,7 +1391,10 @@ async def on_ready():
 
 if __name__ == "__main__":
     print("Starting bot...")
-    if DISCORD_TOKEN:
+    if not DISCORD_TOKEN:
+        print("ERROR: DISCORD_BOT_TOKEN not set!")
+    elif not GROQ_API_KEY:
+        print("ERROR: GROQ_API_KEY not set! AI analysis will not work.")
         bot.run(DISCORD_TOKEN)
     else:
-        print("ERROR: DISCORD_BOT_TOKEN not set!")
+        bot.run(DISCORD_TOKEN)
