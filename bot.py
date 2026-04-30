@@ -116,7 +116,7 @@ def _fetch_text(url, timeout=15):
 
 def _ai_chat(prompt, max_tokens=1500, retries=2):
     global _last_ai_error
-    models = ["gemini-2.0-flash", "gemini-1.5-flash"]
+    models = ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash"]
     for model in models:
         _last_ai_error = ""
         for attempt in range(retries + 1):
