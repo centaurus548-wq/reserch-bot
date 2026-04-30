@@ -52,7 +52,6 @@ ORANGE = 0xFF8C00
 
 
 def split_text(text, max_len=1024):
-    """Split text into chunks of max_len characters."""
     if not text:
         return [""]
     if len(text) <= max_len:
@@ -74,7 +73,6 @@ def split_text(text, max_len=1024):
 
 
 def _cmc_fetch(url):
-    """Synchronous fetch for CoinMarketCap API (needs sync requests)."""
     try:
         r = req_lib.get(url, headers=CMC_HEADERS, timeout=15)
         if r.status_code == 200:
@@ -85,8 +83,6 @@ def _cmc_fetch(url):
 
 
 def _ai_chat(prompt, max_tokens=1500, retries=2):
-    """Synchronous OpenAI chat with retry + fallback model.
-    Primary: gpt-4o-mini, Fallback: gpt-3.5-turbo"""
     global _last_ai_error
     models = ["gpt-4o-mini", "gpt-3.5-turbo"]
 
@@ -112,12 +108,23 @@ def _ai_chat(prompt, max_tokens=1500, retries=2):
                     print("[OpenAI] Success with model: " + model)
                     return r.json()["choices"][0]["message"]["content"]
                 elif r.status_code in [401, 403]:
-                    _last_ai_error = "API Key invalid (HTTP " + str(r.status_code) + "). Cek OPENAI_API_KEY di environment."
+                    _last_ai_error = "API Key invalid (HTTP " + str(r.status_code) + "). Cek OPENAI_API_KEY."
                     print("[OpenAI Error] " + _last_ai_error)
                     return None
                 elif r.status_code == 429:
-                    _last_ai_error = "Rate limited (HTTP 429)"
+                    retry_after = r.headers.get("Retry-After", "")
+                    if retry_after:
+                        try:
+                            wait_sec = int(retry_after)
+                        except Exception:
+                            wait_sec = 10
+                    else:
+                        wait_sec = 10 * (attempt + 1)
+                    _last_ai_error = "Rate limited (HTTP 429), waited " + str(wait_sec) + "s"
                     print("[OpenAI Error] " + _last_ai_error + " on model " + model)
+                    if attempt < retries:
+                        time.sleep(wait_sec)
+                    continue
                 else:
                     _last_ai_error = "HTTP " + str(r.status_code) + ": " + r.text[:100]
                     print("[OpenAI Error] " + _last_ai_error + " on model " + model)
@@ -131,15 +138,14 @@ def _ai_chat(prompt, max_tokens=1500, retries=2):
                     _last_ai_error = err_str[:100] + " (" + model + ")"
                 print("[OpenAI Error] Attempt " + str(attempt + 1) + "/" + str(retries + 1) + " [" + model + "]: " + err_str)
             if attempt < retries:
-                time.sleep(3)
-        # Primary model failed, try fallback
+                if not _last_ai_error.startswith("Rate limited"):
+                    time.sleep(3)
         if model == models[0]:
             print("[OpenAI] Model " + models[0] + " failed all retries, trying fallback...")
     return None
 
 
 def fmt_price(n):
-    """Format number as USD price."""
     if not n or n <= 0:
         return "N/A"
     if n >= 1000:
@@ -150,14 +156,12 @@ def fmt_price(n):
 
 
 def fmt_big(n):
-    """Format large number with commas."""
     if not n or n <= 0:
         return "N/A"
     return "$" + "{:,.0f}".format(n)
 
 
 def pct_str(n):
-    """Format percentage with sign."""
     if n is None:
         return "N/A"
     sign = "+" if n >= 0 else ""
@@ -168,8 +172,6 @@ def pct_str(n):
 
 
 def get_btc_data():
-    """Get BTC data - CMC primary -> CryptoCompare -> CoinCap."""
-    # --- CoinMarketCap (Primary) ---
     data = _cmc_fetch(CMC_BASE + "/v2/cryptocurrency/quotes/latest?id=1&convert=USD")
     if data and "data" in data:
         try:
@@ -192,7 +194,6 @@ def get_btc_data():
         except (KeyError, TypeError):
             pass
 
-    # --- CryptoCompare Fallback ---
     try:
         r = req_lib.get(
             "https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USD&limit=1",
@@ -219,7 +220,6 @@ def get_btc_data():
     except Exception:
         pass
 
-    # --- CoinCap Fallback ---
     try:
         r = req_lib.get(
             "https://api.coincap.io/v2/assets/bitcoin",
@@ -249,8 +249,6 @@ def get_btc_data():
 
 
 def get_global_data():
-    """Get global crypto data - CMC primary -> CoinGecko -> CoinCap."""
-    # --- CoinMarketCap (Primary) ---
     data = _cmc_fetch(CMC_BASE + "/v1/global-metrics/quotes/latest")
     if data and "data" in data:
         try:
@@ -275,7 +273,6 @@ def get_global_data():
         except (KeyError, TypeError):
             pass
 
-    # --- CoinGecko Fallback ---
     try:
         r = req_lib.get(
             "https://api.coingecko.com/api/v3/global",
@@ -296,7 +293,6 @@ def get_global_data():
     except Exception:
         pass
 
-    # --- CoinCap Fallback ---
     try:
         r = req_lib.get(
             "https://api.coincap.io/v2/global",
@@ -325,7 +321,6 @@ def get_global_data():
 
 
 def get_top_gainers():
-    """Get top 3 gainers from CMC listings."""
     data = _cmc_fetch(
         CMC_BASE + "/v1/cryptocurrency/listings/latest?limit=100&sort=volume_24h&sort_dir=desc"
     )
@@ -350,7 +345,6 @@ def get_top_gainers():
 
 
 def get_top_losers():
-    """Get top 3 losers from CMC listings."""
     data = _cmc_fetch(
         CMC_BASE + "/v1/cryptocurrency/listings/latest?limit=100&sort=volume_24h&sort_dir=desc"
     )
@@ -375,7 +369,6 @@ def get_top_losers():
 
 
 def get_fear_greed():
-    """Get Fear & Greed Index from Alternative.me."""
     try:
         r = req_lib.get(
             "https://api.alternative.me/fng/?limit=1",
@@ -391,9 +384,6 @@ def get_fear_greed():
 
 
 def get_news():
-    """Get crypto news with titles, URLs and sources.
-    Returns [{title, url, source}]. Descriptions are added later by AI."""
-    # --- CryptoPanic Direct ---
     try:
         r = req_lib.get(
             "https://cryptopanic.com/api/free/v1/posts/?auth_token=573c95d36a94ec5953e3bb0e5dca7d38&filter=rising&currencies=BTC,ETH&public=true",
@@ -416,7 +406,6 @@ def get_news():
     except Exception:
         pass
 
-    # --- CryptoPanic via Proxy ---
     try:
         cp_url = "https://cryptopanic.com/api/free/v1/posts/?auth_token=573c95d36a94ec5953e3bb0e5dca7d38&filter=rising&currencies=BTC,ETH&public=true"
         px = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(cp_url, safe="")
@@ -437,7 +426,6 @@ def get_news():
     except Exception:
         pass
 
-    # --- Google News RSS ---
     try:
         r = req_lib.get(
             "https://news.google.com/rss/search?q=bitcoin+cryptocurrency+market&hl=en-US&gl=US&ceid=US:en",
@@ -466,8 +454,6 @@ def get_news():
 
 
 def generate_news_descriptions(news):
-    """Use AI to generate brief highlight/description for each news article.
-    Single AI call for all articles to save tokens."""
     if not news or not OPENAI_API_KEY:
         return []
 
@@ -485,7 +471,6 @@ def generate_news_descriptions(news):
     if not result:
         return []
 
-    # Parse AI response - match by number
     descriptions = {}
     for line in result.strip().split("\n"):
         line = line.strip()
@@ -499,7 +484,6 @@ def generate_news_descriptions(news):
                 descriptions[i] = desc
                 break
 
-    # Build result with descriptions
     enriched = []
     for i, n in enumerate(news, 1):
         enriched.append({
@@ -513,17 +497,14 @@ def generate_news_descriptions(news):
 
 
 def get_ff_events(force_refresh=False):
-    """Get Forex Factory events with 6 fallback methods and caching."""
     global ff_cache
 
-    # Return cached if still valid
     if not force_refresh and ff_cache.get("data"):
         if time.time() - ff_cache.get("timestamp", 0) < FF_CACHE_TTL:
             return ff_cache["data"]
 
     events = []
 
-    # --- Method 1: requests direct ---
     try:
         r = req_lib.get(FF_URL, timeout=15, headers={"User-Agent": UA})
         if r.status_code == 200 and r.text.strip():
@@ -535,7 +516,6 @@ def get_ff_events(force_refresh=False):
     except Exception:
         pass
 
-    # --- Method 2: allorigins proxy ---
     try:
         proxy_url = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(FF_URL, safe="")
         r = req_lib.get(proxy_url, timeout=15, headers={"User-Agent": UA})
@@ -548,7 +528,6 @@ def get_ff_events(force_refresh=False):
     except Exception:
         pass
 
-    # --- Method 3: corsproxy ---
     try:
         proxy_url2 = "https://corsproxy.io/?" + req_lib.utils.quote(FF_URL, safe="")
         r = req_lib.get(proxy_url2, timeout=15, headers={"User-Agent": UA})
@@ -561,7 +540,6 @@ def get_ff_events(force_refresh=False):
     except Exception:
         pass
 
-    # --- Method 4: requests nextweek via proxy ---
     try:
         nx_proxy = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(FF_NEXT_URL, safe="")
         r = req_lib.get(nx_proxy, timeout=15, headers={"User-Agent": UA})
@@ -574,7 +552,6 @@ def get_ff_events(force_refresh=False):
     except Exception:
         pass
 
-    # --- Method 5: urllib direct ---
     try:
         import urllib.request
         req = urllib.request.Request(FF_URL, headers={"User-Agent": UA})
@@ -589,7 +566,6 @@ def get_ff_events(force_refresh=False):
     except Exception:
         pass
 
-    # --- Method 6: urllib via allorigins proxy ---
     try:
         import urllib.request
         px = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(FF_URL, safe="")
@@ -605,7 +581,6 @@ def get_ff_events(force_refresh=False):
     except Exception:
         pass
 
-    # All methods failed - return cached even if expired
     if ff_cache.get("data"):
         print("[FF] All methods failed, returning cached data")
         return ff_cache["data"]
@@ -615,7 +590,6 @@ def get_ff_events(force_refresh=False):
 
 
 def get_imf_cpi():
-    """Get US CPI data from IMF SDMX API as secondary source for macro."""
     try:
         r = req_lib.get(
             IMF_CPI_URL,
@@ -705,17 +679,14 @@ def get_imf_cpi():
 
 
 def get_ai_analysis(btc, gd, fg, news, gainers, losers):
-    """AI analysis parsed into 3 parts via [1][2][3] separators."""
     global _last_ai_error
     try:
-        # Check OPENAI_API_KEY first
         if not OPENAI_API_KEY or len(OPENAI_API_KEY) < 10:
             err = "OPENAI_API_KEY belum diatur atau tidak valid di environment variables."
             _last_ai_error = err
             print("[AI Analysis] " + err)
             return {"1]": err, "2]": err, "3]": err}
 
-        # Build news text
         news_text = ""
         if news:
             for n in news[:5]:
@@ -723,7 +694,6 @@ def get_ai_analysis(btc, gd, fg, news, gainers, losers):
         if not news_text:
             news_text = "Tidak tersedia\n"
 
-        # Build gainers text
         gainers_text = ""
         if gainers:
             for g in gainers:
@@ -731,7 +701,6 @@ def get_ai_analysis(btc, gd, fg, news, gainers, losers):
         if not gainers_text:
             gainers_text = "Tidak tersedia\n"
 
-        # Build losers text
         losers_text = ""
         if losers:
             for l in losers:
@@ -768,7 +737,6 @@ def get_ai_analysis(btc, gd, fg, news, gainers, losers):
 
         result = _ai_chat(prompt, max_tokens=2000)
         if result:
-            # Parse [1] [2] [3] separators
             parts = result.split("[")
             parsed = {}
             for part in parts:
@@ -781,14 +749,12 @@ def get_ai_analysis(btc, gd, fg, news, gainers, losers):
                                 content = content[2:]
                         parsed[sep] = content
 
-            # Ensure all 3 parts exist
             for sep in ["1]", "2]", "3]"]:
                 if sep not in parsed:
                     parsed[sep] = "Tidak tersedia"
 
             return parsed
 
-        # _ai_chat returned None
         err_msg = _last_ai_error if _last_ai_error else "Unknown error"
         print("[AI Analysis] Failed: " + err_msg)
         return {"1]": "Gagal: " + err_msg, "2]": "Gagal: " + err_msg, "3]": "Gagal: " + err_msg}
@@ -800,7 +766,6 @@ def get_ai_analysis(btc, gd, fg, news, gainers, losers):
 
 
 def get_macro_analysis(events):
-    """AI analysis for macro economic events."""
     global _last_ai_error
     try:
         if not OPENAI_API_KEY or len(OPENAI_API_KEY) < 10:
@@ -857,7 +822,6 @@ def get_macro_analysis(events):
 
 
 def get_realtime_alert(event):
-    """AI analysis for realtime economic data release alert."""
     global _last_ai_error
     try:
         if not OPENAI_API_KEY or len(OPENAI_API_KEY) < 10:
@@ -907,7 +871,6 @@ def get_realtime_alert(event):
 
 
 def build_report_embeds(btc, gd, fg, news, gainers, losers, ai):
-    """Build report as a single embed with all data combined."""
     wib = pytz.timezone("Asia/Jakarta")
     now_str = datetime.now(wib).strftime("%d %b %Y %H:%M WIB")
 
@@ -917,7 +880,6 @@ def build_report_embeds(btc, gd, fg, news, gainers, losers, ai):
         color=ORANGE,
     )
 
-    # --- BTC Data ---
     price_s = fmt_price(btc["price"])
     ch24_s = pct_str(btc["change_24h"])
     ch7d_s = pct_str(btc["change_7d"])
@@ -935,7 +897,6 @@ def build_report_embeds(btc, gd, fg, news, gainers, losers, ai):
     )
     emb.add_field(name="BTC / USD", value=btc_val, inline=False)
 
-    # --- Global Market ---
     g_mcap = fmt_big(gd["market_cap"])
     g_vol = fmt_big(gd["volume"])
     g_btc_dom = str(round(gd["btc_dom"], 1)) + "%"
@@ -953,11 +914,9 @@ def build_report_embeds(btc, gd, fg, news, gainers, losers, ai):
     )
     emb.add_field(name="Market Global", value=g_val, inline=False)
 
-    # --- Fear & Greed ---
     fg_label = str(fg["value"]) + "/100 - " + fg["classification"]
     emb.add_field(name="Fear & Greed Index", value="**" + fg_label + "**", inline=False)
 
-    # --- News ---
     if news:
         news_val = ""
         for i, n in enumerate(news[:5], 1):
@@ -985,7 +944,6 @@ def build_report_embeds(btc, gd, fg, news, gainers, losers, ai):
     else:
         emb.add_field(name="Berita Terkini", value="Tidak ada berita tersedia saat ini.", inline=False)
 
-    # --- Top 3 Gainers ---
     if gainers:
         g_text = ""
         for g in gainers:
@@ -994,7 +952,6 @@ def build_report_embeds(btc, gd, fg, news, gainers, losers, ai):
     else:
         emb.add_field(name="Top 3 Gainers", value="Tidak tersedia.", inline=False)
 
-    # --- Top 3 Losers ---
     if losers:
         l_text = ""
         for l in losers:
@@ -1003,7 +960,6 @@ def build_report_embeds(btc, gd, fg, news, gainers, losers, ai):
     else:
         emb.add_field(name="Top 3 Losers", value="Tidak tersedia.", inline=False)
 
-    # --- AI Analysis ---
     ringkasan = ai.get("1]", "Tidak tersedia")
     psikologi = ai.get("2]", "Tidak tersedia")
     prediksi = ai.get("3]", "Tidak tersedia")
@@ -1016,7 +972,6 @@ def build_report_embeds(btc, gd, fg, news, gainers, losers, ai):
 
 
 def build_macro_embed(events, ai_text, imf_data=None):
-    """Build macro as a single embed, USD events only."""
     wib = pytz.timezone("Asia/Jakarta")
     now = datetime.now(wib)
     now_str = now.strftime("%d %b %Y %H:%M WIB")
@@ -1027,7 +982,6 @@ def build_macro_embed(events, ai_text, imf_data=None):
         color=ORANGE,
     )
 
-    # --- IMF CPI Data ---
     if imf_data:
         cpi_val = (
             "**Periode Terbaru:** " + str(imf_data["latest_period"]) + " | **CPI:** " + str(imf_data["latest_value"]) + "\n"
@@ -1036,7 +990,6 @@ def build_macro_embed(events, ai_text, imf_data=None):
         )
         emb.add_field(name="US CPI Data (IMF)", value=cpi_val, inline=False)
 
-    # --- Filter USD events only ---
     usd_events = [e for e in events if e.get("country") == "USD"] if events else []
 
     if not usd_events:
@@ -1052,7 +1005,6 @@ def build_macro_embed(events, ai_text, imf_data=None):
                 emb.add_field(name=fn, value=chunk, inline=False)
         return [emb]
 
-    # --- Build event text (USD only) ---
     event_text = ""
     current_day_marker = ""
 
@@ -1117,7 +1069,6 @@ def build_macro_embed(events, ai_text, imf_data=None):
             data_line += " | Actual: " + actual_s
         event_text += data_line + "\n\n"
 
-    # Split event_text into fields of max 1024 chars
     chunks = split_text(event_text, 1024)
     for ci, chunk in enumerate(chunks):
         if ci == 0:
@@ -1126,7 +1077,6 @@ def build_macro_embed(events, ai_text, imf_data=None):
             fn = "Event Ekonomi USD (" + str(ci + 1) + ")"
         emb.add_field(name=fn, value=chunk, inline=False)
 
-    # --- AI Macro Analysis ---
     if ai_text:
         chunks = split_text(ai_text, 1024)
         for i, chunk in enumerate(chunks):
@@ -1137,7 +1087,6 @@ def build_macro_embed(events, ai_text, imf_data=None):
 
 
 def build_realtime_embed(event, ai_text):
-    """Build realtime economic alert embed."""
     impact = event.get("impact", "")
     if impact == "High":
         impact_str = "HIGH"
@@ -1158,7 +1107,6 @@ def build_realtime_embed(event, ai_text):
         color=color,
     )
 
-    # Time in WIB
     date_str = event.get("date", "")
     time_wib = ""
     if date_str and "T" in date_str:
@@ -1208,7 +1156,6 @@ command_lock = asyncio.Lock()
 
 @bot.command(name="report")
 async def cmd_report(ctx):
-    """Generate full crypto market report."""
     if command_lock.locked():
         await ctx.send("Sedang ada report yang sedang diproses. Tunggu sebentar...")
         return
@@ -1227,6 +1174,8 @@ async def cmd_report(ctx):
             news_enriched = await loop.run_in_executor(None, generate_news_descriptions, news)
             if news_enriched:
                 news = news_enriched
+
+            await asyncio.sleep(5)
 
             ai = await loop.run_in_executor(
                 None, get_ai_analysis, btc, gd, fg, news, gainers, losers
@@ -1253,7 +1202,6 @@ async def cmd_report(ctx):
 
 @bot.command(name="macro")
 async def cmd_macro(ctx):
-    """Generate macro economic calendar."""
     if command_lock.locked():
         await ctx.send("Sedang ada macro yang sedang diproses. Tunggu sebentar...")
         return
@@ -1296,7 +1244,6 @@ async def cmd_macro(ctx):
 
 
 async def auto_post():
-    """Auto-post report + macro every day at REPORT_HOUR WIB."""
     await bot.wait_until_ready()
     wib = pytz.timezone("Asia/Jakarta")
 
@@ -1328,6 +1275,8 @@ async def auto_post():
             news_enriched = await loop.run_in_executor(None, generate_news_descriptions, news)
             if news_enriched:
                 news = news_enriched
+
+            await asyncio.sleep(5)
 
             ai = await loop.run_in_executor(
                 None, get_ai_analysis, btc, gd, fg, news, gainers, losers
@@ -1368,7 +1317,6 @@ async def auto_post():
 
 
 async def realtime_monitor():
-    """Monitor FF events every 120s and alert when new data releases."""
     await bot.wait_until_ready()
 
     while not bot.is_closed():
@@ -1427,5 +1375,6 @@ if __name__ == "__main__":
         print("ERROR: DISCORD_BOT_TOKEN not set!")
     elif not OPENAI_API_KEY:
         print("ERROR: OPENAI_API_KEY not set! AI analysis will not work.")
+        bot.run(DISCORD_TOKEN)
     else:
         bot.run(DISCORD_TOKEN)
