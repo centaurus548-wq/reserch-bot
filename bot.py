@@ -143,7 +143,6 @@ def pct_str(n):
 
 def get_btc_data():
     """Get BTC data - CMC primary -> CryptoCompare -> CoinCap."""
-    # --- CoinMarketCap (Primary) ---
     data = _cmc_fetch(CMC_BASE + "/v2/cryptocurrency/quotes/latest?id=1&convert=USD")
     if data and "data" in data:
         try:
@@ -166,12 +165,10 @@ def get_btc_data():
         except (KeyError, TypeError):
             pass
 
-    # --- CryptoCompare Fallback ---
     try:
         r = req_lib.get(
             "https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USD&limit=1",
-            timeout=15,
-            headers={"User-Agent": UA},
+            timeout=15, headers={"User-Agent": UA},
         )
         if r.status_code == 200:
             d = r.json()["Data"]["Data"]
@@ -181,50 +178,35 @@ def get_btc_data():
             if yesterday["close"] and yesterday["close"] > 0:
                 ch24 = ((today["close"] - yesterday["close"]) / yesterday["close"]) * 100
             return {
-                "price": today["close"],
-                "change_24h": ch24,
-                "change_7d": 0,
-                "high": today["high"],
-                "low": today["low"],
-                "volume": today["volumeto"],
-                "market_cap": 0,
-                "source": "CryptoCompare",
+                "price": today["close"], "change_24h": ch24, "change_7d": 0,
+                "high": today["high"], "low": today["low"],
+                "volume": today["volumeto"], "market_cap": 0, "source": "CryptoCompare",
             }
     except Exception:
         pass
 
-    # --- CoinCap Fallback ---
     try:
         r = req_lib.get(
             "https://api.coincap.io/v2/assets/bitcoin",
-            timeout=15,
-            headers={"User-Agent": UA},
+            timeout=15, headers={"User-Agent": UA},
         )
         if r.status_code == 200:
             d = r.json()["data"]
             return {
                 "price": float(d["priceUsd"]),
                 "change_24h": float(d.get("changePercent24Hr", 0) or 0),
-                "change_7d": 0,
-                "high": float(d["priceUsd"]),
-                "low": float(d["priceUsd"]),
+                "change_7d": 0, "high": float(d["priceUsd"]), "low": float(d["priceUsd"]),
                 "volume": float(d.get("volumeUsd24Hr", 0) or 0),
-                "market_cap": float(d.get("marketCapUsd", 0) or 0),
-                "source": "CoinCap",
+                "market_cap": float(d.get("marketCapUsd", 0) or 0), "source": "CoinCap",
             }
     except Exception:
         pass
 
-    return {
-        "price": 0, "change_24h": 0, "change_7d": 0,
-        "high": 0, "low": 0, "volume": 0, "market_cap": 0,
-        "source": "N/A",
-    }
+    return {"price": 0, "change_24h": 0, "change_7d": 0, "high": 0, "low": 0, "volume": 0, "market_cap": 0, "source": "N/A"}
 
 
 def get_global_data():
     """Get global crypto data - CMC primary -> CoinGecko -> CoinCap."""
-    # --- CoinMarketCap (Primary) ---
     data = _cmc_fetch(CMC_BASE + "/v1/global-metrics/quotes/latest")
     if data and "data" in data:
         try:
@@ -240,69 +222,45 @@ def get_global_data():
             return {
                 "market_cap": d["quote"]["USD"]["total_market_cap"],
                 "volume": d["quote"]["USD"]["total_volume_24h"],
-                "btc_dom": btc_dom,
-                "eth_dom": eth_dom,
+                "btc_dom": btc_dom, "eth_dom": eth_dom,
                 "change_24h": d["quote"]["USD"]["total_market_cap_yesterday_percentage_change"],
-                "total_cryptos": d.get("total_cryptocurrencies", 0),
-                "source": "CoinMarketCap",
+                "total_cryptos": d.get("total_cryptocurrencies", 0), "source": "CoinMarketCap",
             }
         except (KeyError, TypeError):
             pass
 
-    # --- CoinGecko Fallback ---
     try:
-        r = req_lib.get(
-            "https://api.coingecko.com/api/v3/global",
-            timeout=15,
-            headers={"User-Agent": UA},
-        )
+        r = req_lib.get("https://api.coingecko.com/api/v3/global", timeout=15, headers={"User-Agent": UA})
         if r.status_code == 200:
             d = r.json()["data"]
             return {
-                "market_cap": d["total_market_cap"]["usd"],
-                "volume": d["total_volume"]["usd"],
-                "btc_dom": d["market_cap_percentage"]["btc"],
-                "eth_dom": d["market_cap_percentage"]["eth"],
+                "market_cap": d["total_market_cap"]["usd"], "volume": d["total_volume"]["usd"],
+                "btc_dom": d["market_cap_percentage"]["btc"], "eth_dom": d["market_cap_percentage"]["eth"],
                 "change_24h": d["market_cap_change_percentage_24h_usd"],
-                "total_cryptos": d.get("active_cryptocurrencies", 0),
-                "source": "CoinGecko",
+                "total_cryptos": d.get("active_cryptocurrencies", 0), "source": "CoinGecko",
             }
     except Exception:
         pass
 
-    # --- CoinCap Fallback ---
     try:
-        r = req_lib.get(
-            "https://api.coincap.io/v2/global",
-            timeout=15,
-            headers={"User-Agent": UA},
-        )
+        r = req_lib.get("https://api.coincap.io/v2/global", timeout=15, headers={"User-Agent": UA})
         if r.status_code == 200:
             d = r.json()["data"]
             return {
                 "market_cap": float(d.get("totalMarketCap", 0) or 0),
                 "volume": float(d.get("totalVolume24Hr", 0) or 0),
-                "btc_dom": float(d.get("btcDominance", 0) or 0),
-                "eth_dom": 0,
-                "change_24h": 0,
-                "total_cryptos": 0,
-                "source": "CoinCap",
+                "btc_dom": float(d.get("btcDominance", 0) or 0), "eth_dom": 0,
+                "change_24h": 0, "total_cryptos": 0, "source": "CoinCap",
             }
     except Exception:
         pass
 
-    return {
-        "market_cap": 0, "volume": 0, "btc_dom": 0,
-        "eth_dom": 0, "change_24h": 0, "total_cryptos": 0,
-        "source": "N/A",
-    }
+    return {"market_cap": 0, "volume": 0, "btc_dom": 0, "eth_dom": 0, "change_24h": 0, "total_cryptos": 0, "source": "N/A"}
 
 
 def get_top_gainers():
     """Get top 3 gainers from CMC listings."""
-    data = _cmc_fetch(
-        CMC_BASE + "/v1/cryptocurrency/listings/latest?limit=100&sort=volume_24h&sort_dir=desc"
-    )
+    data = _cmc_fetch(CMC_BASE + "/v1/cryptocurrency/listings/latest?limit=100&sort=volume_24h&sort_dir=desc")
     if data and "data" in data:
         try:
             coins = data["data"]
@@ -311,12 +269,7 @@ def get_top_gainers():
             result = []
             for coin in valid[:3]:
                 q = coin["quote"]["USD"]
-                result.append({
-                    "name": coin["name"],
-                    "symbol": coin["symbol"].upper(),
-                    "price": q["price"],
-                    "change_24h": q["percent_change_24h"],
-                })
+                result.append({"name": coin["name"], "symbol": coin["symbol"].upper(), "price": q["price"], "change_24h": q["percent_change_24h"]})
             return result
         except (KeyError, TypeError):
             pass
@@ -325,9 +278,7 @@ def get_top_gainers():
 
 def get_top_losers():
     """Get top 3 losers from CMC listings."""
-    data = _cmc_fetch(
-        CMC_BASE + "/v1/cryptocurrency/listings/latest?limit=100&sort=volume_24h&sort_dir=desc"
-    )
+    data = _cmc_fetch(CMC_BASE + "/v1/cryptocurrency/listings/latest?limit=100&sort=volume_24h&sort_dir=desc")
     if data and "data" in data:
         try:
             coins = data["data"]
@@ -336,12 +287,7 @@ def get_top_losers():
             result = []
             for coin in valid[:3]:
                 q = coin["quote"]["USD"]
-                result.append({
-                    "name": coin["name"],
-                    "symbol": coin["symbol"].upper(),
-                    "price": q["price"],
-                    "change_24h": q["percent_change_24h"],
-                })
+                result.append({"name": coin["name"], "symbol": coin["symbol"].upper(), "price": q["price"], "change_24h": q["percent_change_24h"]})
             return result
         except (KeyError, TypeError):
             pass
@@ -351,11 +297,7 @@ def get_top_losers():
 def get_fear_greed():
     """Get Fear & Greed Index from Alternative.me."""
     try:
-        r = req_lib.get(
-            "https://api.alternative.me/fng/?limit=1",
-            timeout=10,
-            headers={"User-Agent": UA},
-        )
+        r = req_lib.get("https://api.alternative.me/fng/?limit=1", timeout=10, headers={"User-Agent": UA})
         if r.status_code == 200:
             d = r.json()["data"][0]
             return {"value": int(d["value"]), "classification": d["value_classification"]}
@@ -365,14 +307,11 @@ def get_fear_greed():
 
 
 def get_news():
-    """Get crypto news with titles, URLs and sources.
-    Returns [{title, url, source}]. Descriptions are added later by AI."""
-    # --- CryptoPanic Direct ---
+    """Get crypto news with titles, URLs and sources."""
     try:
         r = req_lib.get(
             "https://cryptopanic.com/api/free/v1/posts/?auth_token=573c95d36a94ec5953e3bb0e5dca7d38&filter=rising&currencies=BTC,ETH&public=true",
-            timeout=10,
-            headers={"User-Agent": UA},
+            timeout=10, headers={"User-Agent": UA},
         )
         if r.status_code == 200:
             articles = r.json().get("results", [])
@@ -390,7 +329,6 @@ def get_news():
     except Exception:
         pass
 
-    # --- CryptoPanic via Proxy ---
     try:
         cp_url = "https://cryptopanic.com/api/free/v1/posts/?auth_token=573c95d36a94ec5953e3bb0e5dca7d38&filter=rising&currencies=BTC,ETH&public=true"
         px = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(cp_url, safe="")
@@ -411,12 +349,10 @@ def get_news():
     except Exception:
         pass
 
-    # --- Google News RSS ---
     try:
         r = req_lib.get(
             "https://news.google.com/rss/search?q=bitcoin+cryptocurrency+market&hl=en-US&gl=US&ceid=US:en",
-            timeout=15,
-            headers={"User-Agent": UA},
+            timeout=15, headers={"User-Agent": UA},
         )
         if r.status_code == 200:
             root = ET.fromstring(r.text)
@@ -440,8 +376,7 @@ def get_news():
 
 
 def generate_news_descriptions(news):
-    """Use AI to generate brief highlight/description for each news article.
-    Single AI call for all articles to save tokens."""
+    """Use AI to generate brief highlight for each news article."""
     if not news or not GROQ_API_KEY:
         return []
 
@@ -467,20 +402,16 @@ def generate_news_descriptions(news):
         for i in range(1, 6):
             prefix = str(i) + "."
             if line.startswith(prefix):
-                desc = line[len(prefix):].strip()
-                desc = desc.replace("**", "")
+                desc = line[len(prefix):].strip().replace("**", "")
                 descriptions[i] = desc
                 break
 
     enriched = []
     for i, n in enumerate(news, 1):
         enriched.append({
-            "title": n["title"],
-            "url": n["url"],
-            "source": n.get("source", ""),
-            "description": descriptions.get(i, ""),
+            "title": n["title"], "url": n["url"],
+            "source": n.get("source", ""), "description": descriptions.get(i, ""),
         })
-
     return enriched
 
 
@@ -494,19 +425,16 @@ def get_ff_events(force_refresh=False):
 
     events = []
 
-    # --- Method 1: requests direct ---
     try:
         r = req_lib.get(FF_URL, timeout=15, headers={"User-Agent": UA})
         if r.status_code == 200 and r.text.strip():
             events = r.json()
             if events:
                 ff_cache = {"data": events, "timestamp": time.time()}
-                print("[FF] Method 1 success (requests direct)")
                 return events
     except Exception:
         pass
 
-    # --- Method 2: allorigins proxy ---
     try:
         proxy_url = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(FF_URL, safe="")
         r = req_lib.get(proxy_url, timeout=15, headers={"User-Agent": UA})
@@ -514,12 +442,10 @@ def get_ff_events(force_refresh=False):
             events = r.json()
             if events:
                 ff_cache = {"data": events, "timestamp": time.time()}
-                print("[FF] Method 2 success (allorigins)")
                 return events
     except Exception:
         pass
 
-    # --- Method 3: corsproxy ---
     try:
         proxy_url2 = "https://corsproxy.io/?" + req_lib.utils.quote(FF_URL, safe="")
         r = req_lib.get(proxy_url2, timeout=15, headers={"User-Agent": UA})
@@ -527,12 +453,10 @@ def get_ff_events(force_refresh=False):
             events = r.json()
             if events:
                 ff_cache = {"data": events, "timestamp": time.time()}
-                print("[FF] Method 3 success (corsproxy)")
                 return events
     except Exception:
         pass
 
-    # --- Method 4: requests nextweek via proxy ---
     try:
         nx_proxy = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(FF_NEXT_URL, safe="")
         r = req_lib.get(nx_proxy, timeout=15, headers={"User-Agent": UA})
@@ -540,12 +464,10 @@ def get_ff_events(force_refresh=False):
             events = r.json()
             if events:
                 ff_cache = {"data": events, "timestamp": time.time()}
-                print("[FF] Method 4 success (nextweek proxy)")
                 return events
     except Exception:
         pass
 
-    # --- Method 5: urllib direct ---
     try:
         import urllib.request
         req = urllib.request.Request(FF_URL, headers={"User-Agent": UA})
@@ -555,12 +477,10 @@ def get_ff_events(force_refresh=False):
                 events = json.loads(body)
                 if events:
                     ff_cache = {"data": events, "timestamp": time.time()}
-                    print("[FF] Method 5 success (urllib direct)")
                     return events
     except Exception:
         pass
 
-    # --- Method 6: urllib via allorigins proxy ---
     try:
         import urllib.request
         px = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(FF_URL, safe="")
@@ -571,48 +491,36 @@ def get_ff_events(force_refresh=False):
                 events = json.loads(body)
                 if events:
                     ff_cache = {"data": events, "timestamp": time.time()}
-                    print("[FF] Method 6 success (urllib proxy)")
                     return events
     except Exception:
         pass
 
     if ff_cache.get("data"):
-        print("[FF] All methods failed, returning cached data")
         return ff_cache["data"]
 
-    print("[FF] All methods failed, no data available")
     return []
 
 
 def get_imf_cpi():
     """Get US CPI data from IMF SDMX API as secondary source for macro."""
     try:
-        r = req_lib.get(
-            IMF_CPI_URL,
-            timeout=20,
-            headers={"User-Agent": UA, "Accept": "application/json"},
-        )
+        r = req_lib.get(IMF_CPI_URL, timeout=20, headers={"User-Agent": UA, "Accept": "application/json"})
         if r.status_code != 200:
-            print("[IMF CPI] HTTP " + str(r.status_code))
             return None
 
         raw = r.json()
-
         data_sets = raw.get("data", {}).get("dataSets", [])
         if not data_sets:
-            print("[IMF CPI] No dataSets found")
             return None
 
         ds = data_sets[0]
         series = ds.get("series", {})
         if not series:
-            print("[IMF CPI] No series found")
             return None
 
         series_key = list(series.keys())[0]
         observations = series[series_key].get("observations", {})
         if not observations:
-            print("[IMF CPI] No observations found")
             return None
 
         structure = raw.get("data", {}).get("structure", {})
@@ -631,7 +539,6 @@ def get_imf_cpi():
             value = obs_val[0] if isinstance(obs_val, list) else obs_val
             if value is None:
                 continue
-
             if time_dim_index >= 0 and time_dim_index < len(parts):
                 pos_idx = int(parts[time_dim_index])
                 if pos_idx < len(time_values):
@@ -640,11 +547,9 @@ def get_imf_cpi():
                     period = "Unknown"
             else:
                 period = "Unknown"
-
             obs_list.append({"period": period, "value": value})
 
         if len(obs_list) < 2:
-            print("[IMF CPI] Not enough data points (" + str(len(obs_list)) + ")")
             return None
 
         obs_list.sort(key=lambda x: x["period"], reverse=True)
@@ -655,17 +560,12 @@ def get_imf_cpi():
         if previous["value"] and previous["value"] != 0:
             change = ((latest["value"] - previous["value"]) / previous["value"]) * 100
 
-        result = {
-            "latest_period": latest["period"],
-            "latest_value": latest["value"],
-            "previous_period": previous["period"],
-            "previous_value": previous["value"],
+        return {
+            "latest_period": latest["period"], "latest_value": latest["value"],
+            "previous_period": previous["period"], "previous_value": previous["value"],
             "change_pct": round(change, 2),
             "trend": "Naik" if change > 0 else ("Turun" if change < 0 else "Stabil"),
         }
-        print("[IMF CPI] Fetched: " + latest["period"] + " = " + str(latest["value"]))
-        return result
-
     except Exception as e:
         print("[IMF CPI Error] " + str(e))
         return None
@@ -742,7 +642,6 @@ def get_ai_analysis(btc, gd, fg, news, gainers, losers):
             for sep in ["1]", "2]", "3]"]:
                 if sep not in parsed:
                     parsed[sep] = "Tidak tersedia"
-
             return parsed
 
     except Exception as e:
@@ -773,8 +672,7 @@ def get_macro_analysis(events):
                 actual = "-"
             event_text += (
                 "- " + title + " | " + country + " | Impact: " + impact
-                + " | Forecast: " + str(forecast)
-                + " | Previous: " + str(previous)
+                + " | Forecast: " + str(forecast) + " | Previous: " + str(previous)
                 + " | Actual: " + str(actual) + "\n"
             )
 
@@ -843,63 +741,37 @@ def get_realtime_alert(event):
 
 
 def build_report_embeds(btc, gd, fg, news, gainers, losers, ai):
-    """Build report embeds - returns list of embeds."""
-    embeds = []
+    """Build report as a single embed with all data combined."""
     wib = pytz.timezone("Asia/Jakarta")
     now_str = datetime.now(wib).strftime("%d %b %Y %H:%M WIB")
 
-    # ========== EMBED 1: Data Pasar + Market Global + Fear & Greed ==========
-    emb1 = discord.Embed(
+    emb = discord.Embed(
         title="Laporan Pasar Crypto",
         description="Data real-time " + now_str,
         color=ORANGE,
     )
 
-    price_s = fmt_price(btc["price"])
-    ch24_s = pct_str(btc["change_24h"])
-    ch7d_s = pct_str(btc["change_7d"])
-    high_s = fmt_price(btc["high"])
-    low_s = fmt_price(btc["low"])
-    vol_s = fmt_big(btc["volume"])
-    mcap_s = fmt_big(btc["market_cap"])
-    src_s = btc["source"]
-
     btc_val = (
-        "**Harga:** " + price_s + "\n"
-        + "**24h:** " + ch24_s + " | **7d:** " + ch7d_s + "\n"
-        + "**High:** " + high_s + " | **Low:** " + low_s + "\n"
-        + "**Volume:** " + vol_s + " | **MCap:** " + mcap_s + "\n"
-        + "*Sumber: " + src_s + "*"
+        "**Harga:** " + fmt_price(btc["price"]) + "\n"
+        + "**24h:** " + pct_str(btc["change_24h"]) + " | **7d:** " + pct_str(btc["change_7d"]) + "\n"
+        + "**High:** " + fmt_price(btc["high"]) + " | **Low:** " + fmt_price(btc["low"]) + "\n"
+        + "**Volume:** " + fmt_big(btc["volume"]) + " | **MCap:** " + fmt_big(btc["market_cap"]) + "\n"
+        + "*Sumber: " + btc["source"] + "*"
     )
-    emb1.add_field(name="BTC / USD", value=btc_val, inline=False)
-
-    g_mcap = fmt_big(gd["market_cap"])
-    g_vol = fmt_big(gd["volume"])
-    g_btc_dom = str(round(gd["btc_dom"], 1)) + "%"
-    g_eth_dom = str(round(gd["eth_dom"], 1)) + "%"
-    g_ch24 = pct_str(gd["change_24h"])
-    g_total = str(gd["total_cryptos"]) if gd["total_cryptos"] > 0 else "N/A"
-    g_src = gd["source"]
+    emb.add_field(name="BTC / USD", value=btc_val, inline=False)
 
     g_val = (
-        "**Total Cap:** " + g_mcap + "\n"
-        + "**Volume 24h:** " + g_vol + "\n"
-        + "**BTC Dom:** " + g_btc_dom + " | **ETH Dom:** " + g_eth_dom + "\n"
-        + "**24h Change:** " + g_ch24 + "\n"
-        + "**Total Crypto:** " + g_total + "\n"
-        + "*Sumber: " + g_src + "*"
+        "**Total Cap:** " + fmt_big(gd["market_cap"]) + "\n"
+        + "**Volume 24h:** " + fmt_big(gd["volume"]) + "\n"
+        + "**BTC Dom:** " + str(round(gd["btc_dom"], 1)) + "% | **ETH Dom:** " + str(round(gd["eth_dom"], 1)) + "%\n"
+        + "**24h Change:** " + pct_str(gd["change_24h"]) + "\n"
+        + "**Total Crypto:** " + (str(gd["total_cryptos"]) if gd["total_cryptos"] > 0 else "N/A") + "\n"
+        + "*Sumber: " + gd["source"] + "*"
     )
-    emb1.add_field(name="Market Global", value=g_val, inline=False)
+    emb.add_field(name="Market Global", value=g_val, inline=False)
 
-    fg_val = str(fg["value"])
-    fg_cls = fg["classification"]
-    fg_label = fg_val + "/100 - " + fg_cls
-    emb1.add_field(name="Fear & Greed Index", value="**" + fg_label + "**", inline=False)
-
-    embeds.append(emb1)
-
-    # ========== EMBED 2: Berita + Top Movers ==========
-    emb2 = discord.Embed(title="Berita & Top Movers", color=ORANGE)
+    fg_label = str(fg["value"]) + "/100 - " + fg["classification"]
+    emb.add_field(name="Fear & Greed Index", value="**" + fg_label + "**", inline=False)
 
     if news:
         news_val = ""
@@ -921,102 +793,75 @@ def build_report_embeds(btc, gd, fg, news, gainers, losers, ai):
         if len(news_val) > 1024:
             chunks = split_text(news_val, 1024)
             for ci, chunk in enumerate(chunks):
-                field_name = "Berita Terkini" if ci == 0 else "Berita Terkini (" + str(ci + 1) + ")"
-                emb2.add_field(name=field_name, value=chunk, inline=False)
+                fn = "Berita Terkini" if ci == 0 else "Berita (" + str(ci + 1) + ")"
+                emb.add_field(name=fn, value=chunk, inline=False)
         else:
-            emb2.add_field(name="Berita Terkini", value=news_val, inline=False)
+            emb.add_field(name="Berita Terkini", value=news_val, inline=False)
     else:
-        emb2.add_field(
-            name="Berita Terkini",
-            value="Tidak ada berita tersedia saat ini.",
-            inline=False,
-        )
+        emb.add_field(name="Berita Terkini", value="Tidak ada berita tersedia saat ini.", inline=False)
 
     if gainers:
         g_text = ""
         for g in gainers:
-            name = g["name"]
-            sym = g["symbol"]
-            price = fmt_price(g["price"])
-            ch = "+" + str(round(g["change_24h"], 2)) + "%"
-            g_text += "**" + name + "** (" + sym + "): " + price + " | " + ch + "\n"
-        emb2.add_field(name="Top 3 Gainers", value=g_text, inline=False)
+            g_text += "**" + g["name"] + "** (" + g["symbol"] + "): " + fmt_price(g["price"]) + " | +" + str(round(g["change_24h"], 2)) + "%\n"
+        emb.add_field(name="Top 3 Gainers", value=g_text, inline=False)
     else:
-        emb2.add_field(name="Top 3 Gainers", value="Tidak tersedia.", inline=False)
+        emb.add_field(name="Top 3 Gainers", value="Tidak tersedia.", inline=False)
 
     if losers:
         l_text = ""
         for l in losers:
-            name = l["name"]
-            sym = l["symbol"]
-            price = fmt_price(l["price"])
-            ch = str(round(l["change_24h"], 2)) + "%"
-            l_text += "**" + name + "** (" + sym + "): " + price + " | " + ch + "\n"
-        emb2.add_field(name="Top 3 Losers", value=l_text, inline=False)
+            l_text += "**" + l["name"] + "** (" + l["symbol"] + "): " + fmt_price(l["price"]) + " | " + str(round(l["change_24h"], 2)) + "%\n"
+        emb.add_field(name="Top 3 Losers", value=l_text, inline=False)
     else:
-        emb2.add_field(name="Top 3 Losers", value="Tidak tersedia.", inline=False)
-
-    embeds.append(emb2)
-
-    # ========== EMBED 3: AI Analysis (3 fields) ==========
-    emb3 = discord.Embed(title="Analisis AI", color=ORANGE)
+        emb.add_field(name="Top 3 Losers", value="Tidak tersedia.", inline=False)
 
     ringkasan = ai.get("1]", "Tidak tersedia")
     psikologi = ai.get("2]", "Tidak tersedia")
     prediksi = ai.get("3]", "Tidak tersedia")
 
-    emb3.add_field(name="Ringkasan Pasar", value=ringkasan[:1024], inline=False)
-    emb3.add_field(name="Psikologi Pasar", value=psikologi[:1024], inline=False)
-    emb3.add_field(name="Prediksi Market", value=prediksi[:1024], inline=False)
+    emb.add_field(name="Ringkasan Pasar", value=ringkasan[:1024], inline=False)
+    emb.add_field(name="Psikologi Pasar", value=psikologi[:1024], inline=False)
+    emb.add_field(name="Prediksi Market", value=prediksi[:1024], inline=False)
 
-    embeds.append(emb3)
-
-    return embeds
+    return [emb]
 
 
 def build_macro_embed(events, ai_text, imf_data=None):
-    """Build macro calendar embeds - returns list of embeds."""
-    embeds = []
+    """Build macro as a single embed, USD events only."""
     wib = pytz.timezone("Asia/Jakarta")
     now = datetime.now(wib)
+    now_str = now.strftime("%d %b %Y %H:%M WIB")
 
-    # ========== EMBED: IMF CPI (if available) ==========
-    if imf_data:
-        emb_cpi = discord.Embed(
-            title="IMF - US Consumer Price Index (Secondary Data)",
-            color=ORANGE,
-        )
-        cpi_val = (
-            "**Periode Terbaru:** " + str(imf_data["latest_period"]) + "\n"
-            + "**CPI:** " + str(imf_data["latest_value"]) + "\n"
-            + "**Periode Sebelumnya:** " + str(imf_data["previous_period"]) + "\n"
-            + "**CPI Sebelumnya:** " + str(imf_data["previous_value"]) + "\n"
-            + "**Perubahan:** " + str(imf_data["change_pct"]) + "% (" + imf_data["trend"] + ")\n\n"
-            + "*Sumber: International Monetary Fund (SDMX API)*"
-        )
-        emb_cpi.add_field(name="US CPI Data", value=cpi_val, inline=False)
-        embeds.append(emb_cpi)
-
-    # ========== EMBED: FF Events ==========
-    emb_ff = discord.Embed(
-        title="Kalender Ekonomi - Forex Factory",
+    emb = discord.Embed(
+        title="Kalender Ekonomi (USD)",
+        description="Fokus event USD - " + now_str,
         color=ORANGE,
     )
 
-    if not events:
-        emb_ff.add_field(
-            name="Event Ekonomi",
-            value="Tidak ada data event tersedia saat ini.",
-            inline=False,
+    if imf_data:
+        cpi_val = (
+            "**Periode Terbaru:** " + str(imf_data["latest_period"]) + " | **CPI:** " + str(imf_data["latest_value"]) + "\n"
+            + "**Sebelumnya:** " + str(imf_data["previous_period"]) + " | **CPI:** " + str(imf_data["previous_value"]) + "\n"
+            + "**Perubahan:** " + str(imf_data["change_pct"]) + "% (" + imf_data["trend"] + ")"
         )
-        embeds.append(emb_ff)
-        return embeds
+        emb.add_field(name="US CPI Data (IMF)", value=cpi_val, inline=False)
+
+    usd_events = [e for e in events if e.get("country") == "USD"] if events else []
+
+    if not usd_events:
+        emb.add_field(name="Event Ekonomi USD", value="Tidak ada event USD tersedia saat ini.", inline=False)
+        if ai_text:
+            chunks = split_text(ai_text, 1024)
+            for i, chunk in enumerate(chunks):
+                fn = "Analisis Makroekonomi" if i == 0 else "Analisis Makroekonomi (" + str(i + 1) + ")"
+                emb.add_field(name=fn, value=chunk, inline=False)
+        return [emb]
 
     event_text = ""
     current_day_marker = ""
-    max_events = 20
 
-    for e in events[:max_events]:
+    for e in usd_events[:15]:
         date_str = e.get("date", "")
         event_date = None
         if date_str:
@@ -1060,7 +905,6 @@ def build_macro_embed(events, ai_text, imf_data=None):
             impact_label = "LOW"
 
         title = e.get("title", "Unknown")
-        country = e.get("country", "")
         forecast = e.get("forecast")
         previous = e.get("previous")
         actual = e.get("actual")
@@ -1069,40 +913,27 @@ def build_macro_embed(events, ai_text, imf_data=None):
         previous_s = str(previous) if previous and str(previous).strip() != "" else "-"
         actual_s = str(actual) if actual and str(actual).strip() != "" else "-"
 
-        event_text += (
-            "`" + wib_time + "` **" + title + "** (" + country + ") [" + impact_label + "]\n"
-        )
-
+        event_text += "`" + wib_time + "` **" + title + "** [" + impact_label + "]\n"
         data_line = "  Forecast: " + forecast_s + " | Previous: " + previous_s
         if actual_s != "-":
             data_line += " | Actual: " + actual_s
         event_text += data_line + "\n\n"
 
-    # Split event_text into chunks of 1024 (Discord field value max)
     chunks = split_text(event_text, 1024)
-    current_embed = emb_ff
-
     for ci, chunk in enumerate(chunks):
         if ci == 0:
-            field_name = "Event Ekonomi"
+            fn = "Event Ekonomi USD"
         else:
-            embeds.append(current_embed)
-            field_name = "Event Ekonomi (lanjutan " + str(ci + 1) + ")"
-            current_embed = discord.Embed(title="Kalender Ekonomi (lanjutan)", color=ORANGE)
-        current_embed.add_field(name=field_name, value=chunk, inline=False)
+            fn = "Event Ekonomi USD (" + str(ci + 1) + ")"
+        emb.add_field(name=fn, value=chunk, inline=False)
 
-    embeds.append(current_embed)
-
-    # ========== EMBED: AI Macro Analysis ==========
     if ai_text:
-        emb_ai = discord.Embed(title="Analisis Makroekonomi AI", color=ORANGE)
         chunks = split_text(ai_text, 1024)
         for i, chunk in enumerate(chunks):
-            field_name = "Insight" if i == 0 else ("Insight (lanjutan " + str(i + 1) + ")")
-            emb_ai.add_field(name=field_name, value=chunk, inline=False)
-        embeds.append(emb_ai)
+            fn = "Analisis Makroekonomi" if i == 0 else "Analisis Makroekonomi (" + str(i + 1) + ")"
+            emb.add_field(name=fn, value=chunk, inline=False)
 
-    return embeds
+    return [emb]
 
 
 def build_realtime_embed(event, ai_text):
@@ -1149,11 +980,7 @@ def build_realtime_embed(event, ai_text):
     data_val = ""
     if time_wib:
         data_val += "**Waktu:** " + time_wib + "\n"
-    data_val += (
-        "**Actual:** " + actual_s + "\n"
-        + "**Forecast:** " + forecast_s + "\n"
-        + "**Previous:** " + previous_s
-    )
+    data_val += "**Actual:** " + actual_s + "\n**Forecast:** " + forecast_s + "\n**Previous:** " + previous_s
     emb.add_field(name="Data", value=data_val, inline=False)
 
     if ai_text:
@@ -1196,9 +1023,7 @@ async def cmd_report(ctx):
             if news_enriched:
                 news = news_enriched
 
-            ai = await loop.run_in_executor(
-                None, get_ai_analysis, btc, gd, fg, news, gainers, losers
-            )
+            ai = await loop.run_in_executor(None, get_ai_analysis, btc, gd, fg, news, gainers, losers)
 
             embeds = build_report_embeds(btc, gd, fg, news, gainers, losers, ai)
 
@@ -1232,14 +1057,11 @@ async def cmd_macro(ctx):
             loop = asyncio.get_event_loop()
 
             events = await loop.run_in_executor(None, get_ff_events, True)
-
             imf_cpi = await loop.run_in_executor(None, get_imf_cpi)
 
             ai_text = ""
             if events:
-                ai_text = await loop.run_in_executor(
-                    None, get_macro_analysis, events
-                )
+                ai_text = await loop.run_in_executor(None, get_macro_analysis, events)
 
             embeds = build_macro_embed(events, ai_text, imf_cpi)
 
@@ -1297,9 +1119,7 @@ async def auto_post():
             if news_enriched:
                 news = news_enriched
 
-            ai = await loop.run_in_executor(
-                None, get_ai_analysis, btc, gd, fg, news, gainers, losers
-            )
+            ai = await loop.run_in_executor(None, get_ai_analysis, btc, gd, fg, news, gainers, losers)
 
             report_embeds = build_report_embeds(btc, gd, fg, news, gainers, losers, ai)
             for emb in report_embeds:
@@ -1363,9 +1183,7 @@ async def realtime_monitor():
 
                             channel = bot.get_channel(CHANNEL_ID)
                             if channel:
-                                ai_text = await loop.run_in_executor(
-                                    None, get_realtime_alert, e
-                                )
+                                ai_text = await loop.run_in_executor(None, get_realtime_alert, e)
                                 emb = build_realtime_embed(e, ai_text)
                                 await channel.send(embed=emb)
                                 print("[Realtime] Alert: " + title)
