@@ -1,9 +1,3 @@
-# ==============================================================================
-#  DISCORD CRYPTO RESEARCH BOT - V2 OPTIMIZED
-#  Gemini API | CMC Primary | FF 3 Fallbacks | IMF CPI | AI 3 Fields
-#  Top Gainers/Losers | News | Realtime Alerts | Auto-Post
-# ==============================================================================
-
 import discord
 from discord.ext import commands
 import asyncio
@@ -15,15 +9,11 @@ from datetime import datetime, timedelta
 import pytz
 import time
 
-# ======================== CONFIGURATION ========================
-
 DISCORD_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "0"))
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 CMC_API_KEY = os.environ.get("CMC_API_KEY", "")
 REPORT_HOUR = int(os.environ.get("REPORT_HOUR_WIB", "8"))
-
-# ======================== GLOBALS ========================
 
 last_alerted = set()
 ff_cache = {}
@@ -34,14 +24,10 @@ fng_cache = {}
 FNG_CACHE_TTL = 300
 _last_ai_error = ""
 
-# ======================== CONNECTION POOL ========================
-
 session = req_lib.Session()
 session.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 })
-
-# ======================== API URLs ========================
 
 FF_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 FF_NEXT_URL = "https://nfs.faireconomy.media/ff_calendar_nextweek.json"
@@ -51,8 +37,6 @@ IMF_CPI_URL = "https://api.imf.org/external/sdmx/2.1/data/IMF.STA,CPI/USA....A?s
 CP_API = "https://cryptopanic.com/api/free/v1/posts/?auth_token=573c95d36a94ec5953e3bb0e5dca7d38&filter=rising&currencies=BTC,ETH&public=true"
 ORANGE = 0xFF8C00
 RED = 0xFF0000
-
-# ======================== HELPER FUNCTIONS ========================
 
 
 def split_text(text, max_len=1024):
@@ -114,9 +98,18 @@ def _fetch_text(url, timeout=15):
     return None
 
 
-def _ai_chat(prompt, max_tokens=1500, retries=2):
-    global _last_ai_error
-    models = ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash"]
+_last_request_time = 0
+_MIN_REQUEST_GAP = 8
+
+
+def _ai_chat(prompt, max_tokens=1500, retries=1):
+    global _last_ai_error, _last_request_time
+    models = ["gemini-2.0-flash", "gemini-2.5-flash-preview-05-20"]
+    elapsed = time.time() - _last_request_time
+    if elapsed < _MIN_REQUEST_GAP:
+        wait = _MIN_REQUEST_GAP - elapsed
+        print("[Gemini] Rate limit gap, wait " + str(round(wait, 1)) + "s")
+        time.sleep(wait)
     for model in models:
         _last_ai_error = ""
         for attempt in range(retries + 1):
@@ -127,6 +120,7 @@ def _ai_chat(prompt, max_tokens=1500, retries=2):
                     "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.7},
                 }
                 r = session.post(url, json=payload, timeout=60)
+                _last_request_time = time.time()
                 if r.status_code == 200:
                     data = r.json()
                     candidates = data.get("candidates", [])
@@ -142,7 +136,7 @@ def _ai_chat(prompt, max_tokens=1500, retries=2):
                     return None
                 elif r.status_code == 429:
                     retry_after = r.headers.get("Retry-After", "")
-                    wait_sec = int(retry_after) if retry_after and retry_after.isdigit() else 10 * (attempt + 1)
+                    wait_sec = int(retry_after) if retry_after and retry_after.isdigit() else 35
                     _last_ai_error = "Rate limited 429, wait " + str(wait_sec) + "s"
                     print("[Gemini] 429 on " + model + ", wait " + str(wait_sec) + "s")
                     if attempt < retries:
@@ -164,6 +158,7 @@ def _ai_chat(prompt, max_tokens=1500, retries=2):
                 time.sleep(3)
         if model == models[0]:
             print("[Gemini] " + models[0] + " failed, trying fallback...")
+            time.sleep(5)
     return None
 
 
@@ -204,9 +199,6 @@ def _parse_cp_articles(data):
         source_name = source.get("title", "") if isinstance(source, dict) else str(source)
         result.append({"title": title, "url": url, "source": source_name})
     return result
-
-
-# ======================== DATA FUNCTIONS ========================
 
 
 def get_btc_data():
@@ -464,9 +456,6 @@ def get_imf_cpi():
         return None
 
 
-# ======================== AI ANALYSIS FUNCTIONS ========================
-
-
 def _check_key():
     if not GEMINI_API_KEY or len(GEMINI_API_KEY) < 10:
         return "GEMINI_API_KEY belum diatur atau tidak valid."
@@ -612,9 +601,6 @@ def get_realtime_alert(event):
         err_msg = str(e)[:200]
         print("[Realtime AI Error] " + err_msg)
         return "Error analisis realtime: " + err_msg
-
-
-# ======================== EMBED BUILDERS ========================
 
 
 def _fmt_coin_line(c):
@@ -764,15 +750,10 @@ def build_realtime_embed(event, ai_text):
     return emb
 
 
-# ======================== BOT SETUP ========================
-
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 command_lock = asyncio.Lock()
-
-
-# ======================== BOT COMMANDS ========================
 
 
 @bot.command(name="report")
@@ -794,7 +775,7 @@ async def cmd_report(ctx):
             news_enriched = await loop.run_in_executor(None, generate_news_descriptions, news)
             if news_enriched:
                 news = news_enriched
-            await asyncio.sleep(3)
+            await asyncio.sleep(10)
             ai = await loop.run_in_executor(None, get_ai_analysis, btc, gd, fg, news, gainers, losers)
             embeds = build_report_embeds(btc, gd, fg, news, gainers, losers, ai)
             try:
@@ -845,9 +826,6 @@ async def cmd_macro(ctx):
             await ctx.send("Gagal membuat macro: " + str(e))
 
 
-# ======================== AUTO POST ========================
-
-
 async def auto_post():
     await bot.wait_until_ready()
     wib = pytz.timezone("Asia/Jakarta")
@@ -875,11 +853,11 @@ async def auto_post():
             news_enriched = await loop.run_in_executor(None, generate_news_descriptions, news)
             if news_enriched:
                 news = news_enriched
-            await asyncio.sleep(3)
+            await asyncio.sleep(10)
             ai = await loop.run_in_executor(None, get_ai_analysis, btc, gd, fg, news, gainers, losers)
             for emb in build_report_embeds(btc, gd, fg, news, gainers, losers, ai):
                 await channel.send(embed=emb)
-            await asyncio.sleep(3)
+            await asyncio.sleep(10)
             all_events, imf_cpi = await asyncio.gather(
                 loop.run_in_executor(None, get_ff_events, False),
                 loop.run_in_executor(None, get_imf_cpi),
@@ -893,9 +871,6 @@ async def auto_post():
             print("[Auto] Post completed at " + now.strftime("%Y-%m-%d %H:%M"))
         except Exception as e:
             print("[Auto Error] " + str(e))
-
-
-# ======================== REALTIME MONITOR ========================
 
 
 async def realtime_monitor():
@@ -929,9 +904,6 @@ async def realtime_monitor():
         await asyncio.sleep(120)
 
 
-# ======================== BOT EVENTS ========================
-
-
 @bot.event
 async def on_ready():
     print("Bot online: " + bot.user.name)
@@ -940,8 +912,6 @@ async def on_ready():
     bot.loop.create_task(auto_post())
     bot.loop.create_task(realtime_monitor())
 
-
-# ======================== MAIN ========================
 
 if __name__ == "__main__":
     print("Starting bot...")
