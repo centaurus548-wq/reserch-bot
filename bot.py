@@ -1,15 +1,13 @@
 # ==============================================================================
-#  DISCORD CRYPTO RESEARCH BOT - FINAL OPTIMIZED VERSION
-#  Features: CMC Primary, FF 6 Fallbacks, IMF CPI Secondary, AI 3 Fields,
-#            Top Gainers/Losers, News Links, Realtime Alerts, Auto-Post
+#  DISCORD CRYPTO RESEARCH BOT - V2 OPTIMIZED
+#  Gemini API | CMC Primary | FF 3 Fallbacks | IMF CPI | AI 3 Fields
+#  Top Gainers/Losers | News | Realtime Alerts | Auto-Post
 # ==============================================================================
 
 import discord
 from discord.ext import commands
-import aiohttp
 import asyncio
 import os
-import re
 import json
 import requests as req_lib
 import xml.etree.ElementTree as ET
@@ -21,7 +19,7 @@ import time
 
 DISCORD_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "0"))
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 CMC_API_KEY = os.environ.get("CMC_API_KEY", "")
 REPORT_HOUR = int(os.environ.get("REPORT_HOUR_WIB", "8"))
 
@@ -30,28 +28,39 @@ REPORT_HOUR = int(os.environ.get("REPORT_HOUR_WIB", "8"))
 last_alerted = set()
 ff_cache = {}
 FF_CACHE_TTL = 300  # 5 minutes
-_last_ai_error = ""  # Track last AI API error reason
+imf_cpi_cache = {}
+IMF_CPI_CACHE_TTL = 3600  # 1 hour
+fng_cache = {}
+FNG_CACHE_TTL = 300  # 5 minutes
+_last_ai_error = ""
+
+# ======================== CONNECTION POOL ========================
+
+session = req_lib.Session()
+session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+})
 
 # ======================== API URLs ========================
 
 FF_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 FF_NEXT_URL = "https://nfs.faireconomy.media/ff_calendar_nextweek.json"
-FF_PROXY = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(FF_URL, safe="")
-FF_PROXY2 = "https://corsproxy.io/?" + req_lib.utils.quote(FF_URL, safe="")
 
 CMC_BASE = "https://pro-api.coinmarketcap.com"
 CMC_HEADERS = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
 
 IMF_CPI_URL = "https://api.imf.org/external/sdmx/2.1/data/IMF.STA,CPI/USA....A?startPeriod=2023-01&endPeriod=2026-12&format=json"
 
-UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+CP_API = "https://cryptopanic.com/api/free/v1/posts/?auth_token=573c95d36a94ec5953e3bb0e5dca7d38&filter=rising&currencies=BTC,ETH&public=true"
 
 ORANGE = 0xFF8C00
+RED = 0xFF0000
 
 # ======================== HELPER FUNCTIONS ========================
 
 
 def split_text(text, max_len=1024):
+    """Split text into chunks of max_len characters at line boundaries."""
     if not text:
         return [""]
     if len(text) <= max_len:
@@ -72,9 +81,19 @@ def split_text(text, max_len=1024):
     return chunks
 
 
-def _cmc_fetch(url):
+def _safe_num(val, fallback=0):
+    """Safely convert value to float."""
     try:
-        r = req_lib.get(url, headers=CMC_HEADERS, timeout=15)
+        v = float(val)
+        return v if v == v else fallback  # filter NaN
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _cmc_fetch(url):
+    """Fetch from CoinMarketCap API."""
+    try:
+        r = session.get(url, headers=CMC_HEADERS, timeout=15)
         if r.status_code == 200:
             return r.json()
     except Exception as e:
@@ -82,70 +101,93 @@ def _cmc_fetch(url):
     return None
 
 
+def _fetch_json(url, timeout=15):
+    """Generic fetch with session, returns parsed JSON or None."""
+    try:
+        r = session.get(url, timeout=timeout)
+        if r.status_code == 200 and r.text.strip():
+            return r.json()
+    except Exception:
+        pass
+    return None
+
+
+def _fetch_text(url, timeout=15):
+    """Generic fetch returning raw text or None."""
+    try:
+        r = session.get(url, timeout=timeout)
+        if r.status_code == 200 and r.text.strip():
+            return r.text
+    except Exception:
+        pass
+    return None
+
+
 def _ai_chat(prompt, max_tokens=1500, retries=2):
+    """Google Gemini chat with retry + fallback model.
+    Primary: gemini-2.0-flash, Fallback: gemini-1.5-flash."""
     global _last_ai_error
-    models = ["gpt-4o-mini", "gpt-3.5-turbo"]
+    models = ["gemini-2.0-flash", "gemini-1.5-flash"]
 
     for model in models:
         _last_ai_error = ""
         for attempt in range(retries + 1):
             try:
-                r = req_lib.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers={
-                        "Authorization": "Bearer " + OPENAI_API_KEY,
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "max_tokens": max_tokens,
+                url = (
+                    "https://generativelanguage.googleapis.com/v1beta/models/"
+                    + model + ":generateContent?key=" + GEMINI_API_KEY
+                )
+                payload = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "maxOutputTokens": max_tokens,
                         "temperature": 0.7,
                     },
-                    timeout=60,
-                )
+                }
+                r = session.post(url, json=payload, timeout=60)
+
                 if r.status_code == 200:
-                    print("[OpenAI] Success with model: " + model)
-                    return r.json()["choices"][0]["message"]["content"]
+                    data = r.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts:
+                            print("[Gemini] OK " + model)
+                            return parts[0].get("text", "")
+                    _last_ai_error = "Empty response from " + model
                 elif r.status_code in [401, 403]:
-                    _last_ai_error = "API Key invalid (HTTP " + str(r.status_code) + "). Cek OPENAI_API_KEY."
-                    print("[OpenAI Error] " + _last_ai_error)
+                    _last_ai_error = "API Key invalid (HTTP " + str(r.status_code) + ")"
+                    print("[Gemini Error] " + _last_ai_error)
                     return None
                 elif r.status_code == 429:
                     retry_after = r.headers.get("Retry-After", "")
-                    if retry_after:
-                        try:
-                            wait_sec = int(retry_after)
-                        except Exception:
-                            wait_sec = 10
-                    else:
-                        wait_sec = 10 * (attempt + 1)
-                    _last_ai_error = "Rate limited (HTTP 429), waited " + str(wait_sec) + "s"
-                    print("[OpenAI Error] " + _last_ai_error + " on model " + model)
+                    wait_sec = int(retry_after) if retry_after and retry_after.isdigit() else 10 * (attempt + 1)
+                    _last_ai_error = "Rate limited 429, wait " + str(wait_sec) + "s"
+                    print("[Gemini] 429 on " + model + ", wait " + str(wait_sec) + "s")
                     if attempt < retries:
                         time.sleep(wait_sec)
                     continue
                 else:
                     _last_ai_error = "HTTP " + str(r.status_code) + ": " + r.text[:100]
-                    print("[OpenAI Error] " + _last_ai_error + " on model " + model)
+                    print("[Gemini Error] " + _last_ai_error)
             except Exception as e:
                 err_str = str(e)
                 if "timeout" in err_str.lower():
-                    _last_ai_error = "Timeout 60s on model " + model
+                    _last_ai_error = "Timeout 60s on " + model
                 elif "connection" in err_str.lower():
                     _last_ai_error = "Connection error: " + err_str[:80]
                 else:
                     _last_ai_error = err_str[:100] + " (" + model + ")"
-                print("[OpenAI Error] Attempt " + str(attempt + 1) + "/" + str(retries + 1) + " [" + model + "]: " + err_str)
-            if attempt < retries:
-                if not _last_ai_error.startswith("Rate limited"):
-                    time.sleep(3)
+                print("[Gemini Error] " + str(attempt + 1) + "/" + str(retries + 1) + " [" + model + "]: " + err_str)
+            if attempt < retries and not _last_ai_error.startswith("Rate limited"):
+                time.sleep(3)
         if model == models[0]:
-            print("[OpenAI] Model " + models[0] + " failed all retries, trying fallback...")
+            print("[Gemini] " + models[0] + " failed, trying fallback...")
     return None
 
 
 def fmt_price(n):
+    """Format number as USD price."""
     if not n or n <= 0:
         return "N/A"
     if n >= 1000:
@@ -156,37 +198,53 @@ def fmt_price(n):
 
 
 def fmt_big(n):
+    """Format large number with commas."""
     if not n or n <= 0:
         return "N/A"
     return "$" + "{:,.0f}".format(n)
 
 
 def pct_str(n):
+    """Format percentage with sign."""
     if n is None:
         return "N/A"
     sign = "+" if n >= 0 else ""
     return sign + str(round(n, 2)) + "%"
 
 
+def _parse_cp_articles(data):
+    """Parse CryptoPanic API response into [{title, url, source}]."""
+    if not data:
+        return []
+    articles = data.get("results", [])
+    result = []
+    for a in articles[:5]:
+        title = a.get("title", "")
+        if not title:
+            continue
+        url = a.get("url", "")
+        source = a.get("source", {})
+        source_name = source.get("title", "") if isinstance(source, dict) else str(source)
+        result.append({"title": title, "url": url, "source": source_name})
+    return result
+
+
 # ======================== DATA FUNCTIONS ========================
 
 
 def get_btc_data():
+    """Get BTC data - CMC primary -> CryptoCompare -> CoinCap."""
+    # --- CoinMarketCap (Primary) ---
     data = _cmc_fetch(CMC_BASE + "/v2/cryptocurrency/quotes/latest?id=1&convert=USD")
     if data and "data" in data:
         try:
-            btc = data["data"]["1"]
-            q = btc["quote"]["USD"]
-            h24 = q.get("high_24h", {})
-            l24 = q.get("low_24h", {})
-            high_val = h24.get("price", 0) or q["price"]
-            low_val = l24.get("price", 0) or q["price"]
+            q = data["data"]["1"]["quote"]["USD"]
             return {
                 "price": q["price"],
                 "change_24h": q["percent_change_24h"],
                 "change_7d": q["percent_change_7d"],
-                "high": high_val,
-                "low": low_val,
+                "high": q.get("high_24h", {}).get("price", 0) or q["price"],
+                "low": q.get("low_24h", {}).get("price", 0) or q["price"],
                 "volume": q["volume_24h"],
                 "market_cap": q["market_cap"],
                 "source": "CoinMarketCap",
@@ -194,11 +252,11 @@ def get_btc_data():
         except (KeyError, TypeError):
             pass
 
+    # --- CryptoCompare Fallback ---
     try:
-        r = req_lib.get(
+        r = session.get(
             "https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USD&limit=1",
             timeout=15,
-            headers={"User-Agent": UA},
         )
         if r.status_code == 200:
             d = r.json()["Data"]["Data"]
@@ -208,47 +266,39 @@ def get_btc_data():
             if yesterday["close"] and yesterday["close"] > 0:
                 ch24 = ((today["close"] - yesterday["close"]) / yesterday["close"]) * 100
             return {
-                "price": today["close"],
-                "change_24h": ch24,
-                "change_7d": 0,
-                "high": today["high"],
-                "low": today["low"],
-                "volume": today["volumeto"],
-                "market_cap": 0,
+                "price": today["close"], "change_24h": ch24, "change_7d": 0,
+                "high": today["high"], "low": today["low"],
+                "volume": today["volumeto"], "market_cap": 0,
                 "source": "CryptoCompare",
             }
     except Exception:
         pass
 
-    try:
-        r = req_lib.get(
-            "https://api.coincap.io/v2/assets/bitcoin",
-            timeout=15,
-            headers={"User-Agent": UA},
-        )
-        if r.status_code == 200:
-            d = r.json()["data"]
+    # --- CoinCap Fallback ---
+    data = _fetch_json("https://api.coincap.io/v2/assets/bitcoin")
+    if data:
+        try:
+            d = data["data"]
             return {
                 "price": float(d["priceUsd"]),
-                "change_24h": float(d.get("changePercent24Hr", 0) or 0),
+                "change_24h": _safe_num(d.get("changePercent24Hr")),
                 "change_7d": 0,
                 "high": float(d["priceUsd"]),
                 "low": float(d["priceUsd"]),
-                "volume": float(d.get("volumeUsd24Hr", 0) or 0),
-                "market_cap": float(d.get("marketCapUsd", 0) or 0),
+                "volume": _safe_num(d.get("volumeUsd24Hr")),
+                "market_cap": _safe_num(d.get("marketCapUsd")),
                 "source": "CoinCap",
             }
-    except Exception:
-        pass
+        except (KeyError, TypeError):
+            pass
 
-    return {
-        "price": 0, "change_24h": 0, "change_7d": 0,
-        "high": 0, "low": 0, "volume": 0, "market_cap": 0,
-        "source": "N/A",
-    }
+    return {"price": 0, "change_24h": 0, "change_7d": 0,
+            "high": 0, "low": 0, "volume": 0, "market_cap": 0, "source": "N/A"}
 
 
 def get_global_data():
+    """Get global crypto data - CMC primary -> CoinGecko -> CoinCap."""
+    # --- CoinMarketCap (Primary) ---
     data = _cmc_fetch(CMC_BASE + "/v1/global-metrics/quotes/latest")
     if data and "data" in data:
         try:
@@ -257,15 +307,12 @@ def get_global_data():
             eth_dom = d.get("eth_dominance", 0)
             mcp = d.get("market_cap_percentage")
             if mcp:
-                if not btc_dom:
-                    btc_dom = mcp.get("BTC", 0)
-                if not eth_dom:
-                    eth_dom = mcp.get("ETH", 0)
+                btc_dom = btc_dom or mcp.get("BTC", 0)
+                eth_dom = eth_dom or mcp.get("ETH", 0)
             return {
                 "market_cap": d["quote"]["USD"]["total_market_cap"],
                 "volume": d["quote"]["USD"]["total_volume_24h"],
-                "btc_dom": btc_dom,
-                "eth_dom": eth_dom,
+                "btc_dom": btc_dom, "eth_dom": eth_dom,
                 "change_24h": d["quote"]["USD"]["total_market_cap_yesterday_percentage_change"],
                 "total_cryptos": d.get("total_cryptocurrencies", 0),
                 "source": "CoinMarketCap",
@@ -273,14 +320,11 @@ def get_global_data():
         except (KeyError, TypeError):
             pass
 
-    try:
-        r = req_lib.get(
-            "https://api.coingecko.com/api/v3/global",
-            timeout=15,
-            headers={"User-Agent": UA},
-        )
-        if r.status_code == 200:
-            d = r.json()["data"]
+    # --- CoinGecko Fallback ---
+    data = _fetch_json("https://api.coingecko.com/api/v3/global")
+    if data:
+        try:
+            d = data["data"]
             return {
                 "market_cap": d["total_market_cap"]["usd"],
                 "volume": d["total_volume"]["usd"],
@@ -290,176 +334,122 @@ def get_global_data():
                 "total_cryptos": d.get("active_cryptocurrencies", 0),
                 "source": "CoinGecko",
             }
-    except Exception:
-        pass
+        except (KeyError, TypeError):
+            pass
 
-    try:
-        r = req_lib.get(
-            "https://api.coincap.io/v2/global",
-            timeout=15,
-            headers={"User-Agent": UA},
-        )
-        if r.status_code == 200:
-            d = r.json()["data"]
+    # --- CoinCap Fallback ---
+    data = _fetch_json("https://api.coincap.io/v2/global")
+    if data:
+        try:
+            d = data["data"]
             return {
-                "market_cap": float(d.get("totalMarketCap", 0) or 0),
-                "volume": float(d.get("totalVolume24Hr", 0) or 0),
-                "btc_dom": float(d.get("btcDominance", 0) or 0),
-                "eth_dom": 0,
-                "change_24h": 0,
-                "total_cryptos": 0,
+                "market_cap": _safe_num(d.get("totalMarketCap")),
+                "volume": _safe_num(d.get("totalVolume24Hr")),
+                "btc_dom": _safe_num(d.get("btcDominance")),
+                "eth_dom": 0, "change_24h": 0, "total_cryptos": 0,
                 "source": "CoinCap",
             }
-    except Exception:
-        pass
-
-    return {
-        "market_cap": 0, "volume": 0, "btc_dom": 0,
-        "eth_dom": 0, "change_24h": 0, "total_cryptos": 0,
-        "source": "N/A",
-    }
-
-
-def get_top_gainers():
-    data = _cmc_fetch(
-        CMC_BASE + "/v1/cryptocurrency/listings/latest?limit=100&sort=volume_24h&sort_dir=desc"
-    )
-    if data and "data" in data:
-        try:
-            coins = data["data"]
-            valid = [c for c in coins if c["quote"]["USD"].get("percent_change_24h") is not None]
-            valid.sort(key=lambda x: x["quote"]["USD"]["percent_change_24h"], reverse=True)
-            result = []
-            for coin in valid[:3]:
-                q = coin["quote"]["USD"]
-                result.append({
-                    "name": coin["name"],
-                    "symbol": coin["symbol"].upper(),
-                    "price": q["price"],
-                    "change_24h": q["percent_change_24h"],
-                })
-            return result
         except (KeyError, TypeError):
             pass
-    return []
+
+    return {"market_cap": 0, "volume": 0, "btc_dom": 0,
+            "eth_dom": 0, "change_24h": 0, "total_cryptos": 0, "source": "N/A"}
 
 
-def get_top_losers():
+def get_top_movers():
+    """Get top 3 gainers + top 3 losers from 1 CMC API call. Sort once."""
     data = _cmc_fetch(
         CMC_BASE + "/v1/cryptocurrency/listings/latest?limit=100&sort=volume_24h&sort_dir=desc"
     )
+    gainers, losers = [], []
     if data and "data" in data:
         try:
             coins = data["data"]
             valid = [c for c in coins if c["quote"]["USD"].get("percent_change_24h") is not None]
+            # Sort once ascending, bottom 3 = losers, top 3 = gainers
             valid.sort(key=lambda x: x["quote"]["USD"]["percent_change_24h"])
-            result = []
             for coin in valid[:3]:
                 q = coin["quote"]["USD"]
-                result.append({
-                    "name": coin["name"],
-                    "symbol": coin["symbol"].upper(),
-                    "price": q["price"],
-                    "change_24h": q["percent_change_24h"],
-                })
-            return result
+                losers.append({"name": coin["name"], "symbol": coin["symbol"].upper(),
+                              "price": q["price"], "change_24h": q["percent_change_24h"]})
+            for coin in valid[-3:]:
+                q = coin["quote"]["USD"]
+                gainers.append({"name": coin["name"], "symbol": coin["symbol"].upper(),
+                                "price": q["price"], "change_24h": q["percent_change_24h"]})
         except (KeyError, TypeError):
             pass
-    return []
+    return gainers, losers
 
 
 def get_fear_greed():
-    try:
-        r = req_lib.get(
-            "https://api.alternative.me/fng/?limit=1",
-            timeout=10,
-            headers={"User-Agent": UA},
-        )
-        if r.status_code == 200:
-            d = r.json()["data"][0]
-            return {"value": int(d["value"]), "classification": d["value_classification"]}
-    except Exception:
-        pass
+    """Get Fear & Greed Index with 5-min cache."""
+    global fng_cache
+    if fng_cache.get("data"):
+        if time.time() - fng_cache.get("ts", 0) < FNG_CACHE_TTL:
+            return fng_cache["data"]
+
+    data = _fetch_json("https://api.alternative.me/fng/?limit=1", timeout=10)
+    if data:
+        try:
+            d = data["data"][0]
+            result = {"value": int(d["value"]), "classification": d["value_classification"]}
+            fng_cache = {"data": result, "ts": time.time()}
+            return result
+        except (KeyError, IndexError):
+            pass
     return {"value": 0, "classification": "N/A"}
 
 
 def get_news():
-    try:
-        r = req_lib.get(
-            "https://cryptopanic.com/api/free/v1/posts/?auth_token=573c95d36a94ec5953e3bb0e5dca7d38&filter=rising&currencies=BTC,ETH&public=true",
-            timeout=10,
-            headers={"User-Agent": UA},
-        )
-        if r.status_code == 200:
-            articles = r.json().get("results", [])
-            if articles:
-                result = []
-                for a in articles[:5]:
-                    title = a.get("title", "")
-                    url = a.get("url", "")
-                    source = a.get("source", {})
-                    source_name = source.get("title", "") if isinstance(source, dict) else str(source)
-                    if title:
-                        result.append({"title": title, "url": url, "source": source_name})
-                if result:
-                    return result
-    except Exception:
-        pass
+    """Get crypto news. Returns [{title, url, source}]."""
+    # --- CryptoPanic Direct ---
+    data = _fetch_json(CP_API, timeout=10)
+    result = _parse_cp_articles(data)
+    if result:
+        return result
 
-    try:
-        cp_url = "https://cryptopanic.com/api/free/v1/posts/?auth_token=573c95d36a94ec5953e3bb0e5dca7d38&filter=rising&currencies=BTC,ETH&public=true"
-        px = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(cp_url, safe="")
-        r = req_lib.get(px, timeout=15, headers={"User-Agent": UA})
-        if r.status_code == 200 and r.text.strip():
-            articles = r.json().get("results", [])
-            if articles:
-                result = []
-                for a in articles[:5]:
-                    title = a.get("title", "")
-                    url = a.get("url", "")
-                    source = a.get("source", {})
-                    source_name = source.get("title", "") if isinstance(source, dict) else str(source)
-                    if title:
-                        result.append({"title": title, "url": url, "source": source_name})
-                if result:
-                    return result
-    except Exception:
-        pass
+    # --- CryptoPanic via Proxy ---
+    px = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(CP_API, safe="")
+    data = _fetch_json(px, timeout=15)
+    result = _parse_cp_articles(data)
+    if result:
+        return result
 
-    try:
-        r = req_lib.get(
-            "https://news.google.com/rss/search?q=bitcoin+cryptocurrency+market&hl=en-US&gl=US&ceid=US:en",
-            timeout=15,
-            headers={"User-Agent": UA},
-        )
-        if r.status_code == 200:
-            root = ET.fromstring(r.text)
+    # --- Google News RSS ---
+    text = _fetch_text(
+        "https://news.google.com/rss/search?q=bitcoin+cryptocurrency+market&hl=en-US&gl=US&ceid=US:en",
+        timeout=15,
+    )
+    if text:
+        try:
+            root = ET.fromstring(text)
             items = root.findall(".//item")
             if items:
                 result = []
                 for item in items[:5]:
-                    title_el = item.find("title")
-                    link_el = item.find("link")
-                    source_el = item.find("source")
-                    if title_el is not None and title_el.text:
-                        link = link_el.text if link_el is not None else ""
-                        source = source_el.text if source_el is not None else ""
-                        result.append({"title": title_el.text, "url": link, "source": source})
+                    t = item.find("title")
+                    l = item.find("link")
+                    s = item.find("source")
+                    if t is not None and t.text:
+                        result.append({
+                            "title": t.text,
+                            "url": l.text if l is not None else "",
+                            "source": s.text if s is not None else "",
+                        })
                 if result:
                     return result
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     return []
 
 
 def generate_news_descriptions(news):
-    if not news or not OPENAI_API_KEY:
+    """Single AI call to generate 1-sentence highlight per article."""
+    if not news or not GEMINI_API_KEY:
         return []
 
-    headlines = ""
-    for i, n in enumerate(news, 1):
-        headlines += str(i) + ". " + n["title"] + "\n"
+    headlines = "\n".join([str(i) + ". " + n["title"] for i, n in enumerate(news, 1)])
 
     prompt = (
         "Untuk setiap berita crypto berikut, buat satu kalimat highlight/ringkasan singkat "
@@ -479,195 +469,117 @@ def generate_news_descriptions(news):
         for i in range(1, 6):
             prefix = str(i) + "."
             if line.startswith(prefix):
-                desc = line[len(prefix):].strip()
-                desc = desc.replace("**", "")
-                descriptions[i] = desc
+                descriptions[i] = line[len(prefix):].strip().replace("**", "")
                 break
 
-    enriched = []
-    for i, n in enumerate(news, 1):
-        enriched.append({
-            "title": n["title"],
-            "url": n["url"],
-            "source": n.get("source", ""),
-            "description": descriptions.get(i, ""),
-        })
-
-    return enriched
+    return [
+        {"title": n["title"], "url": n["url"], "source": n.get("source", ""),
+         "description": descriptions.get(i, "")}
+        for i, n in enumerate(news, 1)
+    ]
 
 
 def get_ff_events(force_refresh=False):
+    """Get Forex Factory events with 3 fallback methods + caching."""
     global ff_cache
 
     if not force_refresh and ff_cache.get("data"):
-        if time.time() - ff_cache.get("timestamp", 0) < FF_CACHE_TTL:
+        if time.time() - ff_cache.get("ts", 0) < FF_CACHE_TTL:
             return ff_cache["data"]
 
-    events = []
+    methods = [
+        (FF_URL, "direct"),
+        ("https://api.allorigins.win/raw?url=" + req_lib.utils.quote(FF_URL, safe=""), "allorigins"),
+        ("https://corsproxy.io/?" + req_lib.utils.quote(FF_URL, safe=""), "corsproxy"),
+    ]
 
-    try:
-        r = req_lib.get(FF_URL, timeout=15, headers={"User-Agent": UA})
-        if r.status_code == 200 and r.text.strip():
-            events = r.json()
-            if events:
-                ff_cache = {"data": events, "timestamp": time.time()}
-                print("[FF] Method 1 success (requests direct)")
-                return events
-    except Exception:
-        pass
+    for url, label in methods:
+        data = _fetch_json(url, timeout=15)
+        if data:
+            ff_cache = {"data": data, "ts": time.time()}
+            print("[FF] OK via " + label)
+            return data
 
-    try:
-        proxy_url = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(FF_URL, safe="")
-        r = req_lib.get(proxy_url, timeout=15, headers={"User-Agent": UA})
-        if r.status_code == 200 and r.text.strip():
-            events = r.json()
-            if events:
-                ff_cache = {"data": events, "timestamp": time.time()}
-                print("[FF] Method 2 success (allorigins)")
-                return events
-    except Exception:
-        pass
-
-    try:
-        proxy_url2 = "https://corsproxy.io/?" + req_lib.utils.quote(FF_URL, safe="")
-        r = req_lib.get(proxy_url2, timeout=15, headers={"User-Agent": UA})
-        if r.status_code == 200 and r.text.strip():
-            events = r.json()
-            if events:
-                ff_cache = {"data": events, "timestamp": time.time()}
-                print("[FF] Method 3 success (corsproxy)")
-                return events
-    except Exception:
-        pass
-
-    try:
-        nx_proxy = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(FF_NEXT_URL, safe="")
-        r = req_lib.get(nx_proxy, timeout=15, headers={"User-Agent": UA})
-        if r.status_code == 200 and r.text.strip():
-            events = r.json()
-            if events:
-                ff_cache = {"data": events, "timestamp": time.time()}
-                print("[FF] Method 4 success (nextweek proxy)")
-                return events
-    except Exception:
-        pass
-
-    try:
-        import urllib.request
-        req = urllib.request.Request(FF_URL, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            body = resp.read().decode("utf-8")
-            if body.strip():
-                events = json.loads(body)
-                if events:
-                    ff_cache = {"data": events, "timestamp": time.time()}
-                    print("[FF] Method 5 success (urllib direct)")
-                    return events
-    except Exception:
-        pass
-
-    try:
-        import urllib.request
-        px = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(FF_URL, safe="")
-        req = urllib.request.Request(px, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            body = resp.read().decode("utf-8")
-            if body.strip():
-                events = json.loads(body)
-                if events:
-                    ff_cache = {"data": events, "timestamp": time.time()}
-                    print("[FF] Method 6 success (urllib proxy)")
-                    return events
-    except Exception:
-        pass
+    nx_url = "https://api.allorigins.win/raw?url=" + req_lib.utils.quote(FF_NEXT_URL, safe="")
+    data = _fetch_json(nx_url, timeout=15)
+    if data:
+        ff_cache = {"data": data, "ts": time.time()}
+        print("[FF] OK via nextweek proxy")
+        return data
 
     if ff_cache.get("data"):
-        print("[FF] All methods failed, returning cached data")
+        print("[FF] All failed, returning stale cache")
         return ff_cache["data"]
 
-    print("[FF] All methods failed, no data available")
+    print("[FF] All methods failed, no data")
     return []
 
 
 def get_imf_cpi():
+    """Get US CPI data from IMF SDMX API (cached 1 hour)."""
+    global imf_cpi_cache
+
+    if imf_cpi_cache.get("data"):
+        if time.time() - imf_cpi_cache.get("ts", 0) < IMF_CPI_CACHE_TTL:
+            return imf_cpi_cache["data"]
+
     try:
-        r = req_lib.get(
-            IMF_CPI_URL,
-            timeout=20,
-            headers={"User-Agent": UA, "Accept": "application/json"},
-        )
+        r = session.get(IMF_CPI_URL, timeout=20, headers={"Accept": "application/json"})
         if r.status_code != 200:
-            print("[IMF CPI] HTTP " + str(r.status_code))
             return None
 
         raw = r.json()
-
         data_sets = raw.get("data", {}).get("dataSets", [])
         if not data_sets:
-            print("[IMF CPI] No dataSets found")
             return None
 
-        ds = data_sets[0]
-        series = ds.get("series", {})
+        series = data_sets[0].get("series", {})
         if not series:
-            print("[IMF CPI] No series found")
             return None
 
-        series_key = list(series.keys())[0]
-        observations = series[series_key].get("observations", {})
+        observations = list(series.values())[0].get("observations", {})
         if not observations:
-            print("[IMF CPI] No observations found")
             return None
 
         structure = raw.get("data", {}).get("structure", {})
         dims = structure.get("dimensions", {}).get("observation", [])
-        time_dim_index = -1
-        time_values = []
+        time_idx = -1
+        time_vals = []
         for idx, dim in enumerate(dims):
             if dim.get("id") == "TIME_PERIOD":
-                time_dim_index = idx
-                time_values = dim.get("values", [])
+                time_idx = idx
+                time_vals = dim.get("values", [])
                 break
 
         obs_list = []
-        for obs_key, obs_val in observations.items():
-            parts = obs_key.split(":")
-            value = obs_val[0] if isinstance(obs_val, list) else obs_val
-            if value is None:
+        for key, val in observations.items():
+            v = val[0] if isinstance(val, list) else val
+            if v is None:
                 continue
-
-            if time_dim_index >= 0 and time_dim_index < len(parts):
-                pos_idx = int(parts[time_dim_index])
-                if pos_idx < len(time_values):
-                    period = time_values[pos_idx].get("id", str(pos_idx))
-                else:
-                    period = "Unknown"
+            parts = key.split(":")
+            if 0 <= time_idx < len(parts):
+                pos = int(parts[time_idx])
+                period = time_vals[pos].get("id", "?") if pos < len(time_vals) else "?"
             else:
-                period = "Unknown"
-
-            obs_list.append({"period": period, "value": value})
+                period = "?"
+            obs_list.append({"period": period, "value": v})
 
         if len(obs_list) < 2:
-            print("[IMF CPI] Not enough data points (" + str(len(obs_list)) + ")")
             return None
 
         obs_list.sort(key=lambda x: x["period"], reverse=True)
-        latest = obs_list[0]
-        previous = obs_list[1]
-
+        latest, previous = obs_list[0], obs_list[1]
         change = 0
         if previous["value"] and previous["value"] != 0:
             change = ((latest["value"] - previous["value"]) / previous["value"]) * 100
 
         result = {
-            "latest_period": latest["period"],
-            "latest_value": latest["value"],
-            "previous_period": previous["period"],
-            "previous_value": previous["value"],
+            "latest_period": latest["period"], "latest_value": latest["value"],
+            "previous_period": previous["period"], "previous_value": previous["value"],
             "change_pct": round(change, 2),
             "trend": "Naik" if change > 0 else ("Turun" if change < 0 else "Stabil"),
         }
-        print("[IMF CPI] Fetched: " + latest["period"] + " = " + str(latest["value"]))
+        imf_cpi_cache = {"data": result, "ts": time.time()}
         return result
 
     except Exception as e:
@@ -678,35 +590,24 @@ def get_imf_cpi():
 # ======================== AI ANALYSIS FUNCTIONS ========================
 
 
+def _check_key():
+    """Check if Gemini API key is valid."""
+    if not GEMINI_API_KEY or len(GEMINI_API_KEY) < 10:
+        return "GEMINI_API_KEY belum diatur atau tidak valid."
+    return None
+
+
 def get_ai_analysis(btc, gd, fg, news, gainers, losers):
+    """AI analysis parsed into 3 parts via [1][2][3] separators."""
     global _last_ai_error
+    key_err = _check_key()
+    if key_err:
+        _last_ai_error = key_err
+        return {"1]": key_err, "2]": key_err, "3]": key_err}
     try:
-        if not OPENAI_API_KEY or len(OPENAI_API_KEY) < 10:
-            err = "OPENAI_API_KEY belum diatur atau tidak valid di environment variables."
-            _last_ai_error = err
-            print("[AI Analysis] " + err)
-            return {"1]": err, "2]": err, "3]": err}
-
-        news_text = ""
-        if news:
-            for n in news[:5]:
-                news_text += "- " + n["title"] + "\n"
-        if not news_text:
-            news_text = "Tidak tersedia\n"
-
-        gainers_text = ""
-        if gainers:
-            for g in gainers:
-                gainers_text += g["name"] + " (" + g["symbol"] + "): +" + str(round(g["change_24h"], 2)) + "%\n"
-        if not gainers_text:
-            gainers_text = "Tidak tersedia\n"
-
-        losers_text = ""
-        if losers:
-            for l in losers:
-                losers_text += l["name"] + " (" + l["symbol"] + "): " + str(round(l["change_24h"], 2)) + "%\n"
-        if not losers_text:
-            losers_text = "Tidak tersedia\n"
+        news_text = "\n".join(["- " + n["title"] for n in news[:5]]) if news else "Tidak tersedia"
+        gainers_text = "\n".join([g["name"] + " (" + g["symbol"] + "): +" + str(round(g["change_24h"], 2)) + "%" for g in gainers]) if gainers else "Tidak tersedia"
+        losers_text = "\n".join([l["name"] + " (" + l["symbol"] + "): " + str(round(l["change_24h"], 2)) + "%" for l in losers]) if losers else "Tidak tersedia"
 
         prompt = (
             "Kamu adalah analis crypto profesional. Analisis data pasar berikut dan berikan "
@@ -737,81 +638,85 @@ def get_ai_analysis(btc, gd, fg, news, gainers, losers):
 
         result = _ai_chat(prompt, max_tokens=2000)
         if result:
-            parts = result.split("[")
             parsed = {}
-            for part in parts:
+            for part in result.split("["):
                 for sep in ["1]", "2]", "3]"]:
                     if part.startswith(sep):
                         content = part[len(sep):].strip()
                         if content.startswith("**") and "**" in content[2:]:
-                            content = content[content.index("**") + 2:]
-                            if content.startswith("**"):
-                                content = content[2:]
+                            content = content[content.index("**", 2) + 2:].strip()
                         parsed[sep] = content
 
             for sep in ["1]", "2]", "3]"]:
                 if sep not in parsed:
                     parsed[sep] = "Tidak tersedia"
-
             return parsed
 
-        err_msg = _last_ai_error if _last_ai_error else "Unknown error"
+        err_msg = _last_ai_error or "Unknown error"
         print("[AI Analysis] Failed: " + err_msg)
-        return {"1]": "Gagal: " + err_msg, "2]": "Gagal: " + err_msg, "3]": "Gagal: " + err_msg}
+        fail = "Gagal: " + err_msg
+        return {"1]": fail, "2]": fail, "3]": fail
 
     except Exception as e:
         err_msg = str(e)[:200]
         print("[AI Analysis Error] " + err_msg)
-        return {"1]": "Error: " + err_msg, "2]": "Error: " + err_msg, "3]": "Error: " + err_msg}
+        fail = "Error: " + err_msg
+        return {"1]": fail, "2]": fail, "3]": fail}
 
 
 def get_macro_analysis(events):
+    """AI analysis for USD macro economic events."""
     global _last_ai_error
+    key_err = _check_key()
+    if key_err:
+        return key_err
+    if not events:
+        return "Tidak ada event USD untuk dianalisis saat ini."
     try:
-        if not OPENAI_API_KEY or len(OPENAI_API_KEY) < 10:
-            return "OPENAI_API_KEY belum diatur. AI macro tidak tersedia."
-        if not events:
-            return "Tidak ada event ekonomi untuk dianalisis saat ini."
+        wib = pytz.timezone("Asia/Jakarta")
+        today_str = datetime.now(wib).strftime("%Y-%m-%d")
+        impact_rank = {"High": 0, "Medium": 1, "Low": 2, "": 3}
 
-        event_text = ""
-        count = 0
-        for e in events[:10]:
-            title = e.get("title", "Unknown")
-            country = e.get("country", "")
-            impact = e.get("impact", "")
-            forecast = e.get("forecast", "-")
-            previous = e.get("previous", "-")
-            actual = e.get("actual", "-")
-            if not forecast:
-                forecast = "-"
-            if not previous:
-                previous = "-"
-            if not actual:
-                actual = "-"
-            event_text += (
-                "- " + title + " | " + country + " | Impact: " + impact
-                + " | Forecast: " + str(forecast)
-                + " | Previous: " + str(previous)
-                + " | Actual: " + str(actual) + "\n"
-            )
-            count += 1
-
-        prompt = (
-            "Kamu adalah analis ekonomi makro profesional. Untuk setiap event berikut, "
-            "berikan analisis dalam Bahasa Indonesia.\n\n"
-            "EVENT EKONOMI:\n" + event_text + "\n\n"
-            "Untuk setiap event, berikan:\n"
-            "- RESEARCH: Penjelasan singkat apa itu event dan kenapa penting untuk crypto (2-3 kalimat)\n"
-            "- PROYEKSI: Proyeksi dampak ke BTC dan pasar crypto (2-3 kalimat)\n"
-            "- TERDAMPAK: Level dampak (Tinggi/Sedang/Rendah) untuk crypto (1-2 kalimat)\n\n"
-            "Format: tulis nama event lalu RESEARCH/PROYEKSI/TERDAMPAK. Gunakan Bahasa Indonesia."
+        sorted_events = sorted(
+            events,
+            key=lambda e: (
+                0 if e.get("date", "").startswith(today_str) else 1,
+                impact_rank.get(e.get("impact", ""), 3),
+            ),
         )
 
-        result = _ai_chat(prompt, max_tokens=2000)
+        event_lines = []
+        for e in sorted_events[:10]:
+            title = e.get("title", "Unknown")
+            forecast = e.get("forecast") or "-"
+            previous = e.get("previous") or "-"
+            actual = e.get("actual") or "-"
+            impact = e.get("impact", "")
+            line = "- " + title + " [" + impact + "] | Forecast: " + str(forecast) + " | Previous: " + str(previous)
+            if str(actual) != "-":
+                line += " | Actual: " + str(actual)
+            event_lines.append(line)
+
+        prompt = (
+            "Kamu adalah analis makroekonomi yang fokus pada dampak ke crypto market.\n\n"
+            "EVENT EKONOMI USD:\n" + "\n".join(event_lines) + "\n\n"
+            "Analisa setiap event berdasarkan:\n"
+            "1. Penjelasan singkat apa itu event dan kenapa penting untuk crypto\n"
+            "2. Dampak ke BTC/crypto: Bullish/Bearish/Neutral dengan alasan\n"
+            "3. Level dampak: Tinggi/Sedang/Rendah\n\n"
+            "Gunakan format per event:\n"
+            "**Nama Event** [Impact]\n"
+            "Penjelasan: ...\n"
+            "Dampak: Bullish/Bearish/Neutral - ...\n"
+            "Level: ...\n\n"
+            "Jawab dalam Bahasa Indonesia, ringkas dan terstruktur."
+        )
+
+        result = _ai_chat(prompt, max_tokens=1500)
         if result:
             return result
 
-        err_msg = _last_ai_error if _last_ai_error else "Unknown error"
+        err_msg = _last_ai_error or "Unknown error"
         print("[Macro AI] Failed: " + err_msg)
         return "Gagal mengambil analisis makroekonomi: " + err_msg
 
@@ -822,22 +727,17 @@ def get_macro_analysis(events):
 
 
 def get_realtime_alert(event):
+    """AI analysis for realtime economic data release alert."""
     global _last_ai_error
+    key_err = _check_key()
+    if key_err:
+        return key_err
     try:
-        if not OPENAI_API_KEY or len(OPENAI_API_KEY) < 10:
-            return "OPENAI_API_KEY belum diatur."
         title = event.get("title", "Unknown")
         country = event.get("country", "")
-        forecast = event.get("forecast", "-")
-        previous = event.get("previous", "-")
-        actual = event.get("actual", "-")
-
-        if not forecast:
-            forecast = "-"
-        if not previous:
-            previous = "-"
-        if not actual:
-            actual = "-"
+        forecast = event.get("forecast") or "-"
+        previous = event.get("previous") or "-"
+        actual = event.get("actual") or "-"
 
         prompt = (
             "Kamu adalah analis ekonomi realtime. Event ekonomi baru saja rilis:\n\n"
@@ -857,7 +757,7 @@ def get_realtime_alert(event):
         if result:
             return result
 
-        err_msg = _last_ai_error if _last_ai_error else "Unknown error"
+        err_msg = _last_ai_error or "Unknown error"
         print("[Realtime AI] Failed: " + err_msg)
         return "Gagal mengambil analisis realtime: " + err_msg
 
@@ -870,7 +770,14 @@ def get_realtime_alert(event):
 # ======================== EMBED BUILDERS ========================
 
 
+def _fmt_coin_line(c):
+    """Format a single coin line for gainers/losers."""
+    sign = "+" if c["change_24h"] >= 0 else ""
+    return "**" + c["name"] + "** (" + c["symbol"] + "): " + fmt_price(c["price"]) + " | " + sign + str(round(c["change_24h"], 2)) + "%"
+
+
 def build_report_embeds(btc, gd, fg, news, gainers, losers, ai):
+    """Build report as a single embed."""
     wib = pytz.timezone("Asia/Jakarta")
     now_str = datetime.now(wib).strftime("%d %b %Y %H:%M WIB")
 
@@ -880,98 +787,86 @@ def build_report_embeds(btc, gd, fg, news, gainers, losers, ai):
         color=ORANGE,
     )
 
-    price_s = fmt_price(btc["price"])
-    ch24_s = pct_str(btc["change_24h"])
-    ch7d_s = pct_str(btc["change_7d"])
-    high_s = fmt_price(btc["high"])
-    low_s = fmt_price(btc["low"])
-    vol_s = fmt_big(btc["volume"])
-    mcap_s = fmt_big(btc["market_cap"])
-
+    # --- BTC Data ---
     btc_val = (
-        "**Harga:** " + price_s + "\n"
-        + "**24h:** " + ch24_s + " | **7d:** " + ch7d_s + "\n"
-        + "**High:** " + high_s + " | **Low:** " + low_s + "\n"
-        + "**Volume:** " + vol_s + " | **MCap:** " + mcap_s + "\n"
+        "**Harga:** " + fmt_price(btc["price"]) + "\n"
+        + "**24h:** " + pct_str(btc["change_24h"]) + " | **7d:** " + pct_str(btc["change_7d"]) + "\n"
+        + "**High:** " + fmt_price(btc["high"]) + " | **Low:** " + fmt_price(btc["low"]) + "\n"
+        + "**Volume:** " + fmt_big(btc["volume"]) + " | **MCap:** " + fmt_big(btc["market_cap"]) + "\n"
         + "*Sumber: " + btc["source"] + "*"
     )
     emb.add_field(name="BTC / USD", value=btc_val, inline=False)
 
-    g_mcap = fmt_big(gd["market_cap"])
-    g_vol = fmt_big(gd["volume"])
-    g_btc_dom = str(round(gd["btc_dom"], 1)) + "%"
-    g_eth_dom = str(round(gd["eth_dom"], 1)) + "%"
-    g_ch24 = pct_str(gd["change_24h"])
-    g_total = str(gd["total_cryptos"]) if gd["total_cryptos"] > 0 else "N/A"
-
+    # --- Global Market ---
     g_val = (
-        "**Total Cap:** " + g_mcap + "\n"
-        + "**Volume 24h:** " + g_vol + "\n"
-        + "**BTC Dom:** " + g_btc_dom + " | **ETH Dom:** " + g_eth_dom + "\n"
-        + "**24h Change:** " + g_ch24 + "\n"
-        + "**Total Crypto:** " + g_total + "\n"
+        "**Total Cap:** " + fmt_big(gd["market_cap"]) + "\n"
+        + "**Volume 24h:** " + fmt_big(gd["volume"]) + "\n"
+        + "**BTC Dom:** " + str(round(gd["btc_dom"], 1)) + "% | **ETH Dom:** " + str(round(gd["eth_dom"], 1)) + "%\n"
+        + "**24h Change:** " + pct_str(gd["change_24h"]) + "\n"
+        + "**Total Crypto:** " + (str(gd["total_cryptos"]) if gd["total_cryptos"] > 0 else "N/A") + "\n"
         + "*Sumber: " + gd["source"] + "*"
     )
     emb.add_field(name="Market Global", value=g_val, inline=False)
 
-    fg_label = str(fg["value"]) + "/100 - " + fg["classification"]
-    emb.add_field(name="Fear & Greed Index", value="**" + fg_label + "**", inline=False)
+    # --- Fear & Greed ---
+    emb.add_field(name="Fear & Greed Index",
+                  value="**" + str(fg["value"]) + "/100 - " + fg["classification"] + "**", inline=False)
 
+    # --- News ---
     if news:
         news_val = ""
         for i, n in enumerate(news[:5], 1):
-            title = n.get("title", "")
-            url = n.get("url", "")
-            desc = n.get("description", "")
-            source = n.get("source", "")
-            if url:
-                news_val += "**" + str(i) + ". [" + title + "](" + url + ")**\n"
+            if n.get("url"):
+                news_val += "**" + str(i) + ". [" + n["title"] + "](" + n["url"] + ")**\n"
             else:
-                news_val += "**" + str(i) + ". " + title + "**\n"
-            if desc:
-                news_val += "_" + desc + "_\n"
-            if source:
-                news_val += "Source: " + source + "\n"
+                news_val += "**" + str(i) + ". " + n["title"] + "**\n"
+            if n.get("description"):
+                news_val += "_" + n["description"] + "_\n"
+            if n.get("source"):
+                news_val += "Source: " + n["source"] + "\n"
             news_val += "\n"
         news_val = news_val.strip()
-        if len(news_val) > 1024:
-            chunks = split_text(news_val, 1024)
-            for ci, chunk in enumerate(chunks):
-                fn = "Berita Terkini" if ci == 0 else "Berita (" + str(ci + 1) + ")"
-                emb.add_field(name=fn, value=chunk, inline=False)
-        else:
-            emb.add_field(name="Berita Terkini", value=news_val, inline=False)
+        chunks = split_text(news_val, 1024)
+        for ci, chunk in enumerate(chunks):
+            fn = "Berita Terkini" if ci == 0 else "Berita (" + str(ci + 1) + ")"
+            emb.add_field(name=fn, value=chunk, inline=False)
     else:
         emb.add_field(name="Berita Terkini", value="Tidak ada berita tersedia saat ini.", inline=False)
 
+    # --- Gainers + Losers ---
     if gainers:
-        g_text = ""
-        for g in gainers:
-            g_text += "**" + g["name"] + "** (" + g["symbol"] + "): " + fmt_price(g["price"]) + " | +" + str(round(g["change_24h"], 2)) + "%\n"
-        emb.add_field(name="Top 3 Gainers", value=g_text, inline=False)
+        emb.add_field(name="Top 3 Gainers",
+                      value="\n".join([_fmt_coin_line(g) for g in gainers]), inline=False)
     else:
         emb.add_field(name="Top 3 Gainers", value="Tidak tersedia.", inline=False)
 
     if losers:
-        l_text = ""
-        for l in losers:
-            l_text += "**" + l["name"] + "** (" + l["symbol"] + "): " + fmt_price(l["price"]) + " | " + str(round(l["change_24h"], 2)) + "%\n"
-        emb.add_field(name="Top 3 Losers", value=l_text, inline=False)
+        emb.add_field(name="Top 3 Losers",
+                      value="\n".join([_fmt_coin_line(l) for l in losers]), inline=False)
     else:
         emb.add_field(name="Top 3 Losers", value="Tidak tersedia.", inline=False)
 
-    ringkasan = ai.get("1]", "Tidak tersedia")
-    psikologi = ai.get("2]", "Tidak tersedia")
-    prediksi = ai.get("3]", "Tidak tersedia")
-
-    emb.add_field(name="Ringkasan Pasar", value=ringkasan[:1024], inline=False)
-    emb.add_field(name="Psikologi Pasar", value=psikologi[:1024], inline=False)
-    emb.add_field(name="Prediksi Market", value=prediksi[:1024], inline=False)
+    # --- AI Analysis ---
+    for key, label in [("1]", "Ringkasan Pasar"), ("2]", "Psikologi Pasar"), ("3]", "Prediksi Market")]:
+        emb.add_field(name=label, value=ai.get(key, "Tidak tersedia")[:1024], inline=False)
 
     return [emb]
 
 
+def _utc_to_wib(date_str):
+    """Convert UTC date string to WIB datetime."""
+    if not date_str or "T" not in date_str:
+        return None
+    try:
+        wib = pytz.timezone("Asia/Jakarta")
+        utc_time = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=pytz.UTC)
+        return utc_time.astimezone(wib)
+    except Exception:
+        return None
+
+
 def build_macro_embed(events, ai_text, imf_data=None):
+    """Build macro embed, USD events only with day markers."""
     wib = pytz.timezone("Asia/Jakarta")
     now = datetime.now(wib)
     now_str = now.strftime("%d %b %Y %H:%M WIB")
@@ -982,6 +877,7 @@ def build_macro_embed(events, ai_text, imf_data=None):
         color=ORANGE,
     )
 
+    # --- IMF CPI Data ---
     if imf_data:
         cpi_val = (
             "**Periode Terbaru:** " + str(imf_data["latest_period"]) + " | **CPI:** " + str(imf_data["latest_value"]) + "\n"
@@ -990,96 +886,64 @@ def build_macro_embed(events, ai_text, imf_data=None):
         )
         emb.add_field(name="US CPI Data (IMF)", value=cpi_val, inline=False)
 
-    usd_events = [e for e in events if e.get("country") == "USD"] if events else []
-
-    if not usd_events:
-        emb.add_field(
-            name="Event Ekonomi USD",
-            value="Tidak ada event USD tersedia saat ini.",
-            inline=False,
-        )
+    if not events:
+        emb.add_field(name="Event Ekonomi USD", value="Tidak ada event USD tersedia saat ini.", inline=False)
         if ai_text:
-            chunks = split_text(ai_text, 1024)
-            for i, chunk in enumerate(chunks):
+            for i, chunk in enumerate(split_text(ai_text, 1024)):
                 fn = "Analisis Makroekonomi" if i == 0 else "Analisis Makroekonomi (" + str(i + 1) + ")"
                 emb.add_field(name=fn, value=chunk, inline=False)
         return [emb]
 
+    # --- Build event text with day markers ---
     event_text = ""
-    current_day_marker = ""
+    current_marker = ""
+    today_date = now.date()
+    tomorrow_date = (now + timedelta(days=1)).date()
+    yesterday_date = (now - timedelta(days=1)).date()
 
-    for e in usd_events[:15]:
-        date_str = e.get("date", "")
-        event_date = None
-        if date_str:
-            try:
-                event_date = datetime.strptime(date_str.split("T")[0], "%Y-%m-%d").date()
-            except Exception:
-                pass
-
-        if event_date:
-            if event_date == now.date():
-                day_label = "--- Hari Ini ---"
-            elif event_date == (now + timedelta(days=1)).date():
-                day_label = "--- Besok ---"
-            elif event_date == (now + timedelta(days=-1)).date():
-                day_label = "--- Kemarin ---"
+    for e in events[:15]:
+        wib_dt = _utc_to_wib(e.get("date", ""))
+        if wib_dt:
+            ev_date = wib_dt.date()
+            if ev_date == today_date:
+                marker = "--- Hari Ini ---"
+            elif ev_date == tomorrow_date:
+                marker = "--- Besok ---"
+            elif ev_date == yesterday_date:
+                marker = "--- Kemarin ---"
             else:
-                day_label = ""
-
-            if day_label and day_label != current_day_marker:
+                marker = wib_dt.strftime("%d %b") + " ---"
+            if marker != current_marker:
                 if event_text:
                     event_text += "\n"
-                event_text += "**" + day_label + "**\n"
-                current_day_marker = day_label
-
-        time_str = e.get("date", "")
-        wib_time = "-"
-        if time_str and "T" in time_str:
-            try:
-                utc_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
-                utc_time = utc_time.replace(tzinfo=pytz.UTC)
-                wib_time = utc_time.astimezone(wib).strftime("%H:%M WIB")
-            except Exception:
-                wib_time = time_str.split("T")[1][:5] + " WIB"
+                event_text += "**" + marker + "**\n"
+                current_marker = marker
+            time_s = wib_dt.strftime("%H:%M WIB")
+        else:
+            time_s = "-"
 
         impact = e.get("impact", "")
-        if impact == "High":
-            impact_label = "HIGH"
-        elif impact == "Medium":
-            impact_label = "MED"
-        else:
-            impact_label = "LOW"
+        badge = "HIGH" if impact == "High" else ("MED" if impact == "Medium" else "LOW")
 
         title = e.get("title", "Unknown")
-        forecast = e.get("forecast")
-        previous = e.get("previous")
-        actual = e.get("actual")
+        forecast_s = str(e.get("forecast") or "-").strip() or "-"
+        previous_s = str(e.get("previous") or "-").strip() or "-"
+        actual_s = str(e.get("actual") or "-").strip() or "-"
 
-        forecast_s = str(forecast) if forecast and str(forecast).strip() != "" else "-"
-        previous_s = str(previous) if previous and str(previous).strip() != "" else "-"
-        actual_s = str(actual) if actual and str(actual).strip() != "" else "-"
-
-        event_text += (
-            "`" + wib_time + "` **" + title + "** [" + impact_label + "]\n"
-        )
-
+        event_text += "`" + time_s + "` **" + title + "** [" + badge + "]\n"
         data_line = "  Forecast: " + forecast_s + " | Previous: " + previous_s
         if actual_s != "-":
             data_line += " | Actual: " + actual_s
         event_text += data_line + "\n\n"
 
-    chunks = split_text(event_text, 1024)
-    for ci, chunk in enumerate(chunks):
-        if ci == 0:
-            fn = "Event Ekonomi USD"
-        else:
-            fn = "Event Ekonomi USD (" + str(ci + 1) + ")"
+    # Split events into fields
+    for ci, chunk in enumerate(split_text(event_text, 1024)):
+        fn = "Event Ekonomi USD" if ci == 0 else "Event Ekonomi USD (" + str(ci + 1) + ")"
         emb.add_field(name=fn, value=chunk, inline=False)
 
+    # --- AI Analysis ---
     if ai_text:
-        chunks = split_text(ai_text, 1024)
-        for i, chunk in enumerate(chunks):
+        for i, chunk in enumerate(split_text(ai_text, 1024)):
             fn = "Analisis Makroekonomi" if i == 0 else "Analisis Makroekonomi (" + str(i + 1) + ")"
             emb.add_field(name=fn, value=chunk, inline=False)
 
@@ -1087,16 +951,14 @@ def build_macro_embed(events, ai_text, imf_data=None):
 
 
 def build_realtime_embed(event, ai_text):
+    """Build realtime economic alert embed."""
     impact = event.get("impact", "")
     if impact == "High":
-        impact_str = "HIGH"
-        color = 0xFF0000
+        impact_str, color = "HIGH", RED
     elif impact == "Medium":
-        impact_str = "MEDIUM"
-        color = ORANGE
+        impact_str, color = "MEDIUM", ORANGE
     else:
-        impact_str = "LOW"
-        color = ORANGE
+        impact_str, color = "LOW", ORANGE
 
     title = event.get("title", "Unknown")
     country = event.get("country", "")
@@ -1107,33 +969,14 @@ def build_realtime_embed(event, ai_text):
         color=color,
     )
 
-    date_str = event.get("date", "")
-    time_wib = ""
-    if date_str and "T" in date_str:
-        try:
-            wib = pytz.timezone("Asia/Jakarta")
-            utc_time = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
-            utc_time = utc_time.replace(tzinfo=pytz.UTC)
-            time_wib = utc_time.astimezone(wib).strftime("%d %b %Y %H:%M WIB")
-        except Exception:
-            time_wib = date_str
+    wib_dt = _utc_to_wib(event.get("date", ""))
+    time_wib = wib_dt.strftime("%d %b %Y %H:%M WIB") if wib_dt else event.get("date", "")
 
-    actual = event.get("actual")
-    forecast = event.get("forecast")
-    previous = event.get("previous")
+    actual_s = str(event.get("actual") or "-").strip() or "-"
+    forecast_s = str(event.get("forecast") or "-").strip() or "-"
+    previous_s = str(event.get("previous") or "-").strip() or "-"
 
-    actual_s = str(actual) if actual and str(actual).strip() != "" else "-"
-    forecast_s = str(forecast) if forecast and str(forecast).strip() != "" else "-"
-    previous_s = str(previous) if previous and str(previous).strip() != "" else "-"
-
-    data_val = ""
-    if time_wib:
-        data_val += "**Waktu:** " + time_wib + "\n"
-    data_val += (
-        "**Actual:** " + actual_s + "\n"
-        + "**Forecast:** " + forecast_s + "\n"
-        + "**Previous:** " + previous_s
-    )
+    data_val = "**Waktu:** " + time_wib + "\n**Actual:** " + actual_s + "\n**Forecast:** " + forecast_s + "\n**Previous:** " + previous_s
     emb.add_field(name="Data", value=data_val, inline=False)
 
     if ai_text:
@@ -1147,7 +990,6 @@ def build_realtime_embed(event, ai_text):
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
-
 command_lock = asyncio.Lock()
 
 
@@ -1156,6 +998,7 @@ command_lock = asyncio.Lock()
 
 @bot.command(name="report")
 async def cmd_report(ctx):
+    """Generate full crypto market report."""
     if command_lock.locked():
         await ctx.send("Sedang ada report yang sedang diproses. Tunggu sebentar...")
         return
@@ -1163,31 +1006,34 @@ async def cmd_report(ctx):
     async with command_lock:
         loading = await ctx.send("Mengumpulkan data dan menganalisa pasar...")
         try:
-            loop = asyncio.get_event_loop()
-            btc = await loop.run_in_executor(None, get_btc_data)
-            gd = await loop.run_in_executor(None, get_global_data)
-            fg = await loop.run_in_executor(None, get_fear_greed)
-            news = await loop.run_in_executor(None, get_news)
-            gainers = await loop.run_in_executor(None, get_top_gainers)
-            losers = await loop.run_in_executor(None, get_top_losers)
+            loop = asyncio.get_running_loop()
 
+            # Fetch ALL data concurrently
+            btc, gd, fg, news, (gainers, losers) = await asyncio.gather(
+                loop.run_in_executor(None, get_btc_data),
+                loop.run_in_executor(None, get_global_data),
+                loop.run_in_executor(None, get_fear_greed),
+                loop.run_in_executor(None, get_news),
+                loop.run_in_executor(None, get_top_movers),
+            )
+
+            # AI news descriptions
             news_enriched = await loop.run_in_executor(None, generate_news_descriptions, news)
             if news_enriched:
                 news = news_enriched
 
-            await asyncio.sleep(5)
+            # Small delay to avoid Gemini rate limit
+            await asyncio.sleep(3)
 
-            ai = await loop.run_in_executor(
-                None, get_ai_analysis, btc, gd, fg, news, gainers, losers
-            )
+            # AI analysis
+            ai = await loop.run_in_executor(None, get_ai_analysis, btc, gd, fg, news, gainers, losers)
 
+            # Build and send
             embeds = build_report_embeds(btc, gd, fg, news, gainers, losers, ai)
-
             try:
                 await loading.delete()
             except Exception:
                 pass
-
             for emb in embeds:
                 await ctx.send(embed=emb)
 
@@ -1202,6 +1048,7 @@ async def cmd_report(ctx):
 
 @bot.command(name="macro")
 async def cmd_macro(ctx):
+    """Generate macro economic calendar (USD focus)."""
     if command_lock.locked():
         await ctx.send("Sedang ada macro yang sedang diproses. Tunggu sebentar...")
         return
@@ -1209,25 +1056,28 @@ async def cmd_macro(ctx):
     async with command_lock:
         loading = await ctx.send("Mengumpulkan data kalender ekonomi...")
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
-            events = await loop.run_in_executor(None, get_ff_events, True)
+            # Fetch FF events + IMF CPI concurrently
+            all_events, imf_cpi = await asyncio.gather(
+                loop.run_in_executor(None, get_ff_events, True),
+                loop.run_in_executor(None, get_imf_cpi),
+            )
 
-            imf_cpi = await loop.run_in_executor(None, get_imf_cpi)
+            # Filter USD only before AI analysis
+            usd_events = [e for e in all_events if e.get("country") == "USD"] if all_events else []
 
+            # AI macro analysis (only USD events)
             ai_text = ""
-            if events:
-                ai_text = await loop.run_in_executor(
-                    None, get_macro_analysis, events
-                )
+            if usd_events:
+                ai_text = await loop.run_in_executor(None, get_macro_analysis, usd_events)
 
-            embeds = build_macro_embed(events, ai_text, imf_cpi)
-
+            # Build and send
+            embeds = build_macro_embed(usd_events, ai_text, imf_cpi)
             try:
                 await loading.delete()
             except Exception:
                 pass
-
             for emb in embeds:
                 await ctx.send(embed=emb)
 
@@ -1244,6 +1094,7 @@ async def cmd_macro(ctx):
 
 
 async def auto_post():
+    """Auto-post report + macro every day at REPORT_HOUR WIB."""
     await bot.wait_until_ready()
     wib = pytz.timezone("Asia/Jakarta")
 
@@ -1263,48 +1114,43 @@ async def auto_post():
             continue
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
-            btc = await loop.run_in_executor(None, get_btc_data)
-            gd = await loop.run_in_executor(None, get_global_data)
-            fg = await loop.run_in_executor(None, get_fear_greed)
-            news = await loop.run_in_executor(None, get_news)
-            gainers = await loop.run_in_executor(None, get_top_gainers)
-            losers = await loop.run_in_executor(None, get_top_losers)
+            # Fetch all report data concurrently
+            btc, gd, fg, news, (gainers, losers) = await asyncio.gather(
+                loop.run_in_executor(None, get_btc_data),
+                loop.run_in_executor(None, get_global_data),
+                loop.run_in_executor(None, get_fear_greed),
+                loop.run_in_executor(None, get_news),
+                loop.run_in_executor(None, get_top_movers),
+            )
 
             news_enriched = await loop.run_in_executor(None, generate_news_descriptions, news)
             if news_enriched:
                 news = news_enriched
 
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
 
-            ai = await loop.run_in_executor(
-                None, get_ai_analysis, btc, gd, fg, news, gainers, losers
-            )
+            ai = await loop.run_in_executor(None, get_ai_analysis, btc, gd, fg, news, gainers, losers)
 
-            report_embeds = build_report_embeds(btc, gd, fg, news, gainers, losers, ai)
-            for emb in report_embeds:
+            for emb in build_report_embeds(btc, gd, fg, news, gainers, losers, ai):
                 await channel.send(embed=emb)
 
             await asyncio.sleep(3)
 
-            events = []
-            for attempt in range(3):
-                force = (attempt == 0)
-                events = await loop.run_in_executor(None, get_ff_events, force)
-                if events:
-                    break
-                print("[Auto] FF retry " + str(attempt + 1) + "/3 failed")
-                await asyncio.sleep(10)
+            # Macro: FF + IMF CPI concurrent (cache)
+            all_events, imf_cpi = await asyncio.gather(
+                loop.run_in_executor(None, get_ff_events, False),
+                loop.run_in_executor(None, get_imf_cpi),
+            )
 
-            imf_cpi = await loop.run_in_executor(None, get_imf_cpi)
+            usd_events = [e for e in all_events if e.get("country") == "USD"] if all_events else []
 
             ai_text = ""
-            if events:
-                ai_text = await loop.run_in_executor(None, get_macro_analysis, events)
+            if usd_events:
+                ai_text = await loop.run_in_executor(None, get_macro_analysis, usd_events)
 
-            macro_embeds = build_macro_embed(events, ai_text, imf_cpi)
-            for emb in macro_embeds:
+            for emb in build_macro_embed(usd_events, ai_text, imf_cpi):
                 await channel.send(embed=emb)
 
             print("[Auto] Post completed at " + now.strftime("%Y-%m-%d %H:%M"))
@@ -1317,38 +1163,38 @@ async def auto_post():
 
 
 async def realtime_monitor():
+    """Monitor FF events every 120s, alert on new data releases."""
     await bot.wait_until_ready()
 
     while not bot.is_closed():
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             events = await loop.run_in_executor(None, get_ff_events)
 
             if events:
                 for e in events:
+                    actual = e.get("actual")
+                    if not actual or str(actual).strip() in ["-", "", "None"]:
+                        continue
+
                     title = e.get("title", "")
                     country = e.get("country", "")
-                    actual = e.get("actual")
+                    event_id = title + "_" + country + "_" + str(actual)
 
-                    if actual and str(actual).strip() not in ["-", "", "None"]:
-                        event_id = title + "_" + country + "_" + str(actual)
+                    if event_id in last_alerted:
+                        continue
 
-                        if event_id not in last_alerted:
-                            last_alerted.add(event_id)
+                    last_alerted.add(event_id)
+                    if len(last_alerted) > 500:
+                        for x in list(last_alerted)[:250]:
+                            last_alerted.discard(x)
 
-                            if len(last_alerted) > 500:
-                                to_remove = list(last_alerted)[:250]
-                                for x in to_remove:
-                                    last_alerted.discard(x)
-
-                            channel = bot.get_channel(CHANNEL_ID)
-                            if channel:
-                                ai_text = await loop.run_in_executor(
-                                    None, get_realtime_alert, e
-                                )
-                                emb = build_realtime_embed(e, ai_text)
-                                await channel.send(embed=emb)
-                                print("[Realtime] Alert: " + title)
+                    channel = bot.get_channel(CHANNEL_ID)
+                    if channel:
+                        ai_text = await loop.run_in_executor(None, get_realtime_alert, e)
+                        emb = build_realtime_embed(e, ai_text)
+                        await channel.send(embed=emb)
+                        print("[Realtime] Alert: " + title)
         except Exception as e:
             print("[Realtime Error] " + str(e))
 
@@ -1373,8 +1219,6 @@ if __name__ == "__main__":
     print("Starting bot...")
     if not DISCORD_TOKEN:
         print("ERROR: DISCORD_BOT_TOKEN not set!")
-    elif not OPENAI_API_KEY:
-        print("ERROR: OPENAI_API_KEY not set! AI analysis will not work.")
-        bot.run(DISCORD_TOKEN)
-    else:
-        bot.run(DISCORD_TOKEN)
+    if not GEMINI_API_KEY:
+        print("WARNING: GEMINI_API_KEY not set! AI analysis will not work.")
+    bot.run(DISCORD_TOKEN)
